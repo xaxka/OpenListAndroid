@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.PanToolAlt
-import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Restore
@@ -245,13 +244,7 @@ fun SettingsScreen(
                 value = state.autoOpenWeb,
                 onCheckedChange = viewModel::setAutoOpenWeb
             )
-            SettingsSwitchPreference(
-                title = "动态取色",
-                subtitle = "使用系统壁纸动态配色（Material You），默认关闭",
-                icon = Icons.Outlined.Palette,
-                value = state.dynamicColor,
-                onCheckedChange = viewModel::setDynamicColor
-            )
+            // Blue Light UI：固定浅色、禁动态取色（原则 5），无主题开关项
             SettingsBasicPreference(
                 title = "data 文件夹路径",
                 subtitle = state.dataDir,

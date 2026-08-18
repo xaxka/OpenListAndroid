@@ -1,116 +1,83 @@
 package com.xaxka.openlist.ui.theme
 
-import android.os.Build
 import androidx.compose.animation.core.Ease
 import androidx.compose.animation.core.Easing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 import kotlin.math.sqrt
 
-/** 亮色 ColorScheme：OpenListSeed → TonalSpot(contrast 0) 实算值，显式覆写全部 M3 默认（R18） */
-private val LightColorScheme: ColorScheme = lightColorScheme(
-    primary = OpenListPrimaryLight,
-    onPrimary = OpenListOnPrimaryLight,
-    primaryContainer = OpenListPrimaryContainerLight,
-    onPrimaryContainer = OpenListOnPrimaryContainerLight,
-    inversePrimary = OpenListInversePrimaryLight,
-    secondary = OpenListSecondaryLight,
-    onSecondary = OpenListOnSecondaryLight,
-    secondaryContainer = OpenListSecondaryContainerLight,
-    onSecondaryContainer = OpenListOnSecondaryContainerLight,
-    tertiary = OpenListTertiaryLight,
-    onTertiary = OpenListOnTertiaryLight,
-    tertiaryContainer = OpenListTertiaryContainerLight,
-    onTertiaryContainer = OpenListOnTertiaryContainerLight,
-    error = OpenListErrorLight,
-    onError = OpenListOnErrorLight,
-    errorContainer = OpenListErrorContainerLight,
-    onErrorContainer = OpenListOnErrorContainerLight,
-    surface = OpenListSurfaceLight,
-    onSurface = OpenListOnSurfaceLight,
-    surfaceVariant = OpenListSurfaceVariantLight,
-    onSurfaceVariant = OpenListOnSurfaceVariantLight,
-    surfaceTint = OpenListSurfaceTintLight,
-    inverseSurface = OpenListInverseSurfaceLight,
-    inverseOnSurface = OpenListInverseOnSurfaceLight,
-    outline = OpenListOutlineLight,
-    outlineVariant = OpenListOutlineVariantLight,
+/**
+ * Blue Light UI 全局主题：固定浅色单方案。
+ * 原则 5「可预期」：固定浅色、禁动态取色；darkTheme / dynamicColor 参数仅为
+ * 兼容保留，取值一律忽略（§7.1 移植指南）。
+ */
+private val BlueLightColorScheme: ColorScheme = lightColorScheme(
+    primary = OpenListPrimary,
+    onPrimary = OpenListOnPrimary,
+    primaryContainer = OpenListPrimaryContainer,
+    onPrimaryContainer = OpenListOnPrimaryContainer,
+    inversePrimary = OpenListInversePrimary,
+    secondary = OpenListSecondary,
+    onSecondary = OpenListOnSecondary,
+    secondaryContainer = OpenListSecondaryContainer,
+    onSecondaryContainer = OpenListOnSecondaryContainer,
+    tertiary = OpenListTertiary,
+    onTertiary = OpenListOnTertiary,
+    tertiaryContainer = OpenListTertiaryContainer,
+    onTertiaryContainer = OpenListOnTertiaryContainer,
+    error = OpenListError,
+    onError = OpenListOnError,
+    errorContainer = OpenListErrorContainer,
+    onErrorContainer = OpenListOnErrorContainer,
+    background = OpenListBackground,
+    onBackground = OpenListOnBackground,
+    surface = OpenListSurface,
+    onSurface = OpenListOnSurface,
+    surfaceVariant = OpenListSurfaceVariant,
+    onSurfaceVariant = OpenListOnSurfaceVariant,
+    surfaceTint = OpenListSurfaceTint,
+    inverseSurface = OpenListInverseSurface,
+    inverseOnSurface = OpenListInverseOnSurface,
+    outline = OpenListOutline,
+    outlineVariant = OpenListOutlineVariant,
     scrim = OpenListScrim,
-    surfaceDim = OpenListSurfaceDimLight,
-    surfaceBright = OpenListSurfaceBrightLight,
-    surfaceContainerLowest = OpenListSurfaceContainerLowestLight,
-    surfaceContainerLow = OpenListSurfaceContainerLowLight,
-    surfaceContainer = OpenListSurfaceContainerLight,
-    surfaceContainerHigh = OpenListSurfaceContainerHighLight,
-    surfaceContainerHighest = OpenListSurfaceContainerHighestLight,
+    surfaceDim = OpenListSurfaceDim,
+    surfaceBright = OpenListSurfaceBright,
+    surfaceContainerLowest = OpenListSurfaceContainerLowest,
+    surfaceContainerLow = OpenListSurfaceContainerLow,
+    surfaceContainer = OpenListSurfaceContainer,
+    surfaceContainerHigh = OpenListSurfaceContainerHigh,
+    surfaceContainerHighest = OpenListSurfaceContainerHighest,
 )
 
-/** 暗色 ColorScheme：同种子实算值 */
-private val DarkColorScheme: ColorScheme = darkColorScheme(
-    primary = OpenListPrimaryDark,
-    onPrimary = OpenListOnPrimaryDark,
-    primaryContainer = OpenListPrimaryContainerDark,
-    onPrimaryContainer = OpenListOnPrimaryContainerDark,
-    inversePrimary = OpenListInversePrimaryDark,
-    secondary = OpenListSecondaryDark,
-    onSecondary = OpenListOnSecondaryDark,
-    secondaryContainer = OpenListSecondaryContainerDark,
-    onSecondaryContainer = OpenListOnSecondaryContainerDark,
-    tertiary = OpenListTertiaryDark,
-    onTertiary = OpenListOnTertiaryDark,
-    tertiaryContainer = OpenListTertiaryContainerDark,
-    onTertiaryContainer = OpenListOnTertiaryContainerDark,
-    error = OpenListErrorDark,
-    onError = OpenListOnErrorDark,
-    errorContainer = OpenListErrorContainerDark,
-    onErrorContainer = OpenListOnErrorContainerDark,
-    surface = OpenListSurfaceDark,
-    onSurface = OpenListOnSurfaceDark,
-    surfaceVariant = OpenListSurfaceVariantDark,
-    onSurfaceVariant = OpenListOnSurfaceVariantDark,
-    surfaceTint = OpenListSurfaceTintDark,
-    inverseSurface = OpenListInverseSurfaceDark,
-    inverseOnSurface = OpenListInverseOnSurfaceDark,
-    outline = OpenListOutlineDark,
-    outlineVariant = OpenListOutlineVariantDark,
-    scrim = OpenListScrim,
-    surfaceDim = OpenListSurfaceDimDark,
-    surfaceBright = OpenListSurfaceBrightDark,
-    surfaceContainerLowest = OpenListSurfaceContainerLowestDark,
-    surfaceContainerLow = OpenListSurfaceContainerLowDark,
-    surfaceContainer = OpenListSurfaceContainerDark,
-    surfaceContainerHigh = OpenListSurfaceContainerHighDark,
-    surfaceContainerHighest = OpenListSurfaceContainerHighestDark,
-)
-
-/** 主题 Shapes：小圆角 = 输入框/菜单 R4，大圆角 = 对话框 R28（PIXEL_SPEC §4/附录 R 系列） */
+/** 主题 Shapes：4（输入框/菜单）/ 8（小控件）/ 12（默认卡片）/ 16（大卡）/ 28（弹层） */
 val OpenListShapes = Shapes(
-    extraSmall = ShapeMenuR4,
-    small = ShapeInputOutlineR4,
-    medium = ShapeMenuR4,
-    large = ShapeDialogR28,
+    extraSmall = ShapeRadius4,
+    small = ShapeRadius8,
+    medium = ShapeCardR12,
+    large = ShapeRadius16,
     extraLarge = ShapeDialogR28,
 )
 
 /*
- * 动画令牌：PIXEL_SPEC §5，共 6 个。
+ * 动效令牌：Blue Light UI §2.6。
+ * 规则：不用弹性动画；动效只服务于「状态切换的认知」，不做展示型动效。
  */
 
-/** get-4.6.6 snackbar 进/出曲线 */
+/** Snackbar 进/出曲线（easeOutCirc） */
 val EaseOutCirc: Easing = Easing { t -> sqrt(1f - (t - 1f) * (t - 1f)) }
 
-/** 底部导航页面切换：400ms 线性淡入 */
-val AnimPageFade = tween<Float>(durationMillis = 400, easing = LinearEasing)
+/** 页面转场：150ms 线性淡入，仅进入动画（退出无动画防旧页拦截输入） */
+val AnimPageFade = tween<Float>(durationMillis = 150, easing = LinearEasing)
+
+/** 状态切换 crossfade：300ms（加载→内容、执行中→完成） */
+val AnimCrossfade = tween<Float>(durationMillis = 300, easing = LinearEasing)
 
 /** 主页 FAB 半圈旋转：200ms 线性（每次从 0.5 起） */
 val AnimFabRotate = tween<Float>(durationMillis = 200, easing = LinearEasing)
@@ -118,8 +85,8 @@ val AnimFabRotate = tween<Float>(durationMillis = 200, easing = LinearEasing)
 /** 设置页 Switch 切换：300ms（M3 默认 ease） */
 val AnimSwitchToggle = tween<Float>(durationMillis = 300, easing = Ease)
 
-/** 主题/默认文字样式切换：200ms 线性（kThemeChangeDuration） */
-val AnimThemeChange = tween<Float>(durationMillis = 200, easing = LinearEasing)
+/** Tab 指示器：250ms FastOutSlowIn（位置 + 宽度双动画） */
+val AnimTabIndicator = tween<Float>(durationMillis = 250, easing = FastOutSlowInEasing)
 
 /** GetSnackBar 进/出：1000ms easeOutCirc */
 val AnimGetSnack = tween<Float>(durationMillis = 1000, easing = EaseOutCirc)
@@ -128,26 +95,16 @@ val AnimGetSnack = tween<Float>(durationMillis = 1000, easing = EaseOutCirc)
 val AnimDialogOpen = tween<Float>(durationMillis = 150, easing = LinearEasing)
 
 /**
- * 全局主题：默认固定 PIXEL_SPEC 亮/暗 scheme（ADR-2）；
- * dynamicColor 为 true 且 SDK ≥ 31 才启用 Material You 动态取色。
+ * 全局主题入口：固定 Blue Light 浅色方案。
  */
 @Composable
 fun OpenListTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = false, // 兼容参数：固定浅色，值被忽略
+    @Suppress("UNUSED_PARAMETER") dynamicColor: Boolean = false, // 兼容参数：禁动态取色，值被忽略
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = BlueLightColorScheme,
         typography = OpenListTypography,
         shapes = OpenListShapes,
         content = content,

@@ -11,9 +11,9 @@ import com.xaxka.openlist.ui.theme.WebProgressActive
 import com.xaxka.openlist.ui.theme.WebProgressTrack
 
 /**
- * Web 页顶部线性进度条（照源 web.dart:74-78）：
- * 高 4dp、轨道 0xFFEEEEEE、前景 0xFF2196F3、无动画插值、无端部圆点/间隙（R12）。
- * progress 达 100% 时由调用方归零（源逻辑：完成即隐藏）。
+ * Web 页顶部线性进度条（Blue Light §3.8）：
+ * 高 4dp、surfaceVariant 轨道 + primary 进度、2dp 圆角端部、无动画插值。
+ * progress 达 100% 时由调用方归零（完成即隐藏）。
  */
 @Composable
 fun FlatLinearProgress(
@@ -25,8 +25,8 @@ fun FlatLinearProgress(
         modifier = modifier.height(Dimens.ProgressLinearHeight),
         color = WebProgressActive,
         trackColor = WebProgressTrack,
-        strokeCap = StrokeCap.Butt,
-        gapSize = 0.dp, // R12：显式关闭指示条间隙（关闭性取值，非视觉令牌）
+        strokeCap = StrokeCap.Round, // §2.4 组件级：进度轨道 2dp 圆角
+        gapSize = 0.dp, // 显式关闭指示条间隙（关闭性取值，非视觉令牌）
         drawStopIndicator = {},
     )
 }

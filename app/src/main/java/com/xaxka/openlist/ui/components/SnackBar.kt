@@ -71,7 +71,7 @@ class SnackBarState {
     }
 }
 
-/** easeOutCirc：t → sqrt(1-(t-1)^2)（PIXEL_SPEC §5 AnimGetSnack） */
+/** easeOutCirc：t → sqrt(1-(t-1)^2)（Blue Light §2.6 AnimGetSnack） */
 private val EaseOutCirc = object : Easing {
     override fun transform(fraction: Float): Float {
         val x = fraction - 1f

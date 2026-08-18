@@ -1,6 +1,5 @@
 package com.xaxka.openlist.ui.components
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,8 +20,8 @@ import androidx.compose.ui.Modifier
 import com.xaxka.openlist.ui.theme.Dimens
 
 /**
- * 设置页分组标题（照源 preference_widgets.dart DividerPreference）：
- * outlineVariant 1dp 分割线 + 居中 TitleMedium 标题（色 primary），水平 16 / 垂直 8。
+ * 设置页分组标题（Blue Light §4 设置页模式）：
+ * outlineVariant 1dp 50% 分割线 + 居中 labelMedium 标题（textSecondary 灰字）。
  */
 @Composable
 fun SettingsSectionHeader(
@@ -32,12 +31,11 @@ fun SettingsSectionHeader(
     Column(modifier = modifier.fillMaxWidth()) {
         HorizontalDivider(
             thickness = Dimens.DividerPreferenceHeight,
-            color = MaterialTheme.colorScheme.outlineVariant,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
         )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
                 .padding(
                     horizontal = Dimens.DividerTitlePaddingH,
                     vertical = Dimens.DividerTitlePaddingV,
@@ -46,8 +44,8 @@ fun SettingsSectionHeader(
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

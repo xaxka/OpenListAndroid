@@ -49,7 +49,7 @@ import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.theme.ShapeFABCircle
 import com.xaxka.openlist.ui.theme.ShapeMenuR4
 
-/** FAB 旋转动画：200ms 线性、每次半圈（PIXEL_SPEC §5 AnimFabRotate） */
+/** FAB 旋转动画：200ms 线性、每次半圈（Blue Light §2.6 AnimFabRotate） */
 private const val FAB_ROTATE_ANIM_MS = 200
 private const val HALF_TURN = 0.5f
 
@@ -141,9 +141,8 @@ fun HomeScreen(
 }
 
 /**
- * 顶栏：primaryContainer 背景、TitleLarge 标题。
- * 高度 56dp 对齐源 Flutter AppBar 默认值（M3 TopAppBar 默认 64dp 偏高）；
- * actions 顺序：password（admin 密码）→ more_vert（更多菜单）。
+ * 顶栏：Blue Light 列表页模式——surface 冷白底与页面融为一体、TitleLarge 标题。
+ * 高度 56dp 工具型紧凑顶栏；actions 顺序：password（admin 密码）→ more_vert（更多菜单）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -161,7 +160,8 @@ private fun HomeTopBar(
             )
         },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            containerColor = MaterialTheme.colorScheme.surface,
+            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ),

@@ -51,7 +51,6 @@ class SettingsViewModel @Inject constructor(
         val keepWakeLock: Boolean = false,
         val autostartOnBoot: Boolean = false,
         val autoOpenWeb: Boolean = false,
-        val dynamicColor: Boolean = false,
         val dataDir: String = "",
         val noMemoryCache: Boolean = false,
         // 视频洗码
@@ -81,7 +80,6 @@ class SettingsViewModel @Inject constructor(
         prefs.keepWakeLock,
         prefs.autostartOnBoot,
         prefs.autoOpenWeb,
-        prefs.dynamicColor,
         prefs.dataDir,
         prefs.noMemoryCache,
         prefs.videoHashDirs,
@@ -96,14 +94,13 @@ class SettingsViewModel @Inject constructor(
             keepWakeLock = values[1] as Boolean,
             autostartOnBoot = values[2] as Boolean,
             autoOpenWeb = values[3] as Boolean,
-            dynamicColor = values[4] as Boolean,
-            dataDir = values[5] as String,
-            noMemoryCache = values[6] as Boolean,
-            videoHashDirs = values[7] as List<String>,
-            videoHashSuffix = values[8] as String,
-            videoHashRunning = values[9] as Boolean,
-            videoHashStatus = values[10] as String,
-            silentJumpApp = values[11] as Boolean
+            dataDir = values[4] as String,
+            noMemoryCache = values[5] as Boolean,
+            videoHashDirs = values[6] as List<String>,
+            videoHashSuffix = values[7] as String,
+            videoHashRunning = values[8] as Boolean,
+            videoHashStatus = values[9] as String,
+            silentJumpApp = values[10] as Boolean
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -134,7 +131,6 @@ class SettingsViewModel @Inject constructor(
     fun setKeepWakeLock(value: Boolean) = set(value, prefs::setKeepWakeLock)
     fun setAutostartOnBoot(value: Boolean) = set(value, prefs::setAutostartOnBoot)
     fun setAutoOpenWeb(value: Boolean) = set(value, prefs::setAutoOpenWeb)
-    fun setDynamicColor(value: Boolean) = set(value, prefs::setDynamicColor)
     fun setNoMemoryCache(value: Boolean) = set(value, prefs::setNoMemoryCache)
     fun setSilentJumpApp(value: Boolean) = set(value, prefs::setSilentJumpApp)
 

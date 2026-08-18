@@ -42,15 +42,15 @@ import com.xaxka.openlist.ui.theme.SnackBarMessage
 import com.xaxka.openlist.ui.theme.SnackOnBackground
 
 /**
- * 设置页分组标题：分割线（1dp outlineVariant）+ 居中标题（TitleMedium + primary）。
- * 对应源 preference_widgets.dart DividerPreference。
+ * 设置页分组标题（Blue Light §4 设置页模式）：分割线（1dp outlineVariant 50%）+
+ * 居中标题（labelMedium + textSecondary 灰字，不抢条目视觉）。
  */
 @Composable
 internal fun SettingsDividerPreference(title: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxWidth()) {
         HorizontalDivider(
             thickness = Dimens.DividerPreferenceHeight,
-            color = MaterialTheme.colorScheme.outlineVariant
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
         Box(
             modifier = Modifier
@@ -63,9 +63,8 @@ internal fun SettingsDividerPreference(title: String, modifier: Modifier = Modif
         ) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    color = MaterialTheme.colorScheme.primary
-                )
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
