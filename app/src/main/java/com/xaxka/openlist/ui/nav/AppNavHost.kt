@@ -120,7 +120,10 @@ fun AppNavHost(
                                     painter = painterResource(tab.logoRes),
                                     contentDescription = tab.label,
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(Dimens.NavSvgIconSize),
+                                    // 与两侧 Material 图标同为 24dp：NavigationBarItem 的
+                                    // 图标+文字按列垂直居中，中间图标偏大（曾用 32dp）
+                                    // 会把 "OpenList" 文字下压约 4dp，三个标签文字错位
+                                    modifier = Modifier.size(Dimens.NavIconSize),
                                 )
                             }
                         },

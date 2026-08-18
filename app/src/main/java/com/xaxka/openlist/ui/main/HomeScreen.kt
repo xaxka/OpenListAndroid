@@ -11,7 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -24,7 +24,6 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Password
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -32,8 +31,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,6 +63,7 @@ private const val HALF_TURN = 0.5f
  * 标题光学补偿（em）：拉丁字形墨迹中心（cap 顶 ~ 下延底的中点）比字体度量框中心
  * 低约 0.108em（Roboto：度量框中心在基线上 0.3415em，墨迹中心在基线上 0.2335em）。
  * 负值 = 向上抬，使墨迹中心对齐栏中心（=右侧图标视觉中心）。
+ * 前提：标题行盒必须已被几何居中（见 HomeTopBar 的 Box align），补偿只修字形墨迹。
  */
 private const val OPTICAL_LIFT_EM = -0.108f
 
@@ -73,7 +71,6 @@ private const val OPTICAL_LIFT_EM = -0.108f
  * 服务主页（照源 tmp/lib/pages/alist/alist.dart）：
  * AppBar「OpenList - v…」+ 纯日志列表 + 启停 FAB + 密码/关于对话框。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
@@ -167,58 +164,62 @@ fun HomeScreen(
 }
 
 /**
- * 顶栏：primary 主题色底、标题靠左起始对齐 + 上下垂直居中（TopAppBar）。
- * 状态栏 inset 由外层 statusBarsPadding 承担（TopAppBar 自身 windowInsets 置零），
- * 保证 56dp 全部用于标题行，不被状态栏挤压。
+ * 顶栏：primary 主题色底、56dp 固定高、标题靠左 + 右侧两个图标按钮。
+ * 手写 Box 布局，不走 M3 TopAppBar：标题槽位的实际摆放受 M3 内部实现（内边距、
+ * 高度约束、windowInsets 处理）影响，从外部只能靠字体度量间接修补——此前三次
+ * 度量级修补后实机截图标题墨迹中心仍比右侧按钮高约 11dp。Box 的
+ * align(CenterStart/CenterEnd) 让标题行盒与图标按钮严格共享同一条水平中线，
+ * 对齐成为布局结构保证，再叠加 OPTICAL_LIFT_EM 修字形墨迹（约 2dp）。
+ * 状态栏 inset 由外层 statusBarsPadding 承担，56dp 全部用于标题行。
  * actions 顺序：password（admin 密码）→ more_vert（更多菜单）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HomeTopBar(
     coreVersion: String,
     onSetPassword: () -> Unit,
     onAbout: () -> Unit,
 ) {
-    TopAppBar(
+    Box(
         modifier = Modifier
-            // 先铺主题色背景再 padding：背景覆盖状态栏区域（M3 Surface 背景只画 56dp
-            // 内容区，否则状态栏露出 Scaffold 浅底，与主题色栏形成断裂）
+            // 先铺主题色背景再 padding：背景覆盖状态栏区域（否则状态栏露出 Scaffold
+            // 浅底，与主题色栏形成断裂）
             .background(MaterialTheme.colorScheme.primary)
             .statusBarsPadding()
             .height(Dimens.AppBarHeight),
-        windowInsets = WindowInsets(0, 0, 0, 0),
-        title = {
-            val style = MaterialTheme.typography.titleLarge
-            Text(
-                "OpenList - $coreVersion",
-                style = style.copy(
-                    // 度量框确定化：行框=字号 + 关闭字体填充 + 墨迹度量居中，
-                    // 使基线稳定落在 (56dp 栏中心 + 6.83dp) 处，与 ROM 字体无关
-                    lineHeight = style.fontSize,
-                    platformStyle = PlatformTextStyle(includeFontPadding = false),
-                    lineHeightStyle = LineHeightStyle(
-                        alignment = LineHeightStyle.Alignment.Center,
-                        trim = LineHeightStyle.Trim.None,
-                    ),
+    ) {
+        val style = MaterialTheme.typography.titleLarge
+        Text(
+            "OpenList - $coreVersion",
+            style = style.copy(
+                // 度量框确定化：行框=字号 + 关闭字体填充 + 墨迹度量居中，
+                // 基线位置稳定，与 ROM 字体无关
+                lineHeight = style.fontSize,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.None,
                 ),
-                modifier = Modifier.offset {
+            ),
+            color = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                // 右侧预留两个按钮宽 + 间隙，长标题省略号截断不压到按钮
+                .padding(
+                    start = Dimens.PageMargin,
+                    end = Dimens.IconButtonSize * 2 + Dimens.PageMargin / 2,
+                )
+                .offset {
                     // 光学补偿：度量框上下不对称（上为重音大写预留 ascent、下为深下延
                     // 预留 descent），拉丁墨迹中心低 0.108em。按字号比例上抬该差值，
-                    // 墨迹中心 == 栏中心 28dp == 右侧图标视觉中心，严格共线。
-                    // offset 不参与测量，只影响摆放；sp→px 自动随字号缩放。
+                    // 墨迹中心 == 图标字形中心，严格共线。offset 不参与测量，只影响摆放。
                     IntOffset(0, (style.fontSize.toPx() * OPTICAL_LIFT_EM).roundToInt())
                 },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.primary,
-            scrolledContainerColor = MaterialTheme.colorScheme.primary,
-            titleContentColor = MaterialTheme.colorScheme.onPrimary,
-            actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
-        ),
-        actions = {
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Row(
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
             IconButton(
                 onClick = onSetPassword,
                 modifier = Modifier.size(Dimens.IconButtonSize),
@@ -226,6 +227,7 @@ private fun HomeTopBar(
                 Icon(
                     Icons.Outlined.Password,
                     contentDescription = Strings.SET_ADMIN_PASSWORD,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                 )
             }
             Box {
@@ -237,6 +239,7 @@ private fun HomeTopBar(
                     Icon(
                         Icons.Outlined.MoreVert,
                         contentDescription = Strings.MORE_OPTIONS,
+                        tint = MaterialTheme.colorScheme.onPrimary,
                     )
                 }
                 // PopupMenu：surface / R4 / elevation 3 / 项高 48 / 水平内边距 12（R13）
@@ -261,8 +264,8 @@ private fun HomeTopBar(
                     )
                 }
             }
-        },
-    )
+        }
+    }
 }
 
 /**
