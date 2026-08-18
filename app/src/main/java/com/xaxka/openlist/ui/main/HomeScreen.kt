@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -181,10 +182,14 @@ private fun HomeTopBar(
             Text(
                 "OpenList - $coreVersion",
                 style = MaterialTheme.typography.titleLarge.copy(
-                    // 与右侧图标垂直光学对齐的组合配置：
-                    // 1) includeFontPadding=false：关闭 Android 默认字体顶部填充（默认 true 时
-                    //    字形整体被压低；官方文档明确 LineHeightStyle 完整生效以其为 false 为前提）
-                    // 2) lineHeightStyle Center：行高 28sp 与字号 20sp 的 8sp 余量上下均分
+                    // 强制与右侧图标（视觉中心 = 栏中心 28dp）光学共线：
+                    // 1) lineHeight = fontSize(20sp)：行框收紧到字号本身，字形质量充满行框，
+                    //    不再依赖具体字体的 ascent/descent 度量（换 ROM 自定义字体也成立）
+                    // 2) includeFontPadding=false：关闭 Android 默认字体顶部填充
+                    //    （默认 true 时字形整体下压，官方文档明确 LineHeightStyle 以其为 false 为前提）
+                    // 3) lineHeightStyle Center + Mode.Fixed：字体度量在行框内居中（超出部分上下对称溢出）
+                    // 行框 20dp 被布局居中于 56dp 栏（y=18dp），字形光学中心即栏中心，与图标共线
+                    lineHeight = 20.sp,
                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                     lineHeightStyle = LineHeightStyle(
                         alignment = LineHeightStyle.Alignment.Center,
