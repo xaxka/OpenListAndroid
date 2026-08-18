@@ -36,6 +36,10 @@ class WebViewModel @Inject constructor(
     val silentJumpApp: StateFlow<Boolean> = prefsRepository.silentJumpApp
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /** 界面「深色模式」偏好缓存（网页页深色渲染 = 系统深色 或 应用深色模式） */
+    val darkMode: StateFlow<Boolean> = prefsRepository.darkMode
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /** 当前应加载地址：跟随 ServerManager.serverUrl，空回退默认 */
     val urlToLoad: StateFlow<String> = serverManager.serverUrl
         .map { it ?: DEFAULT_URL }

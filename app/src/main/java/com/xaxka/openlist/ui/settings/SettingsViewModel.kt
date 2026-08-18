@@ -19,8 +19,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import androidx.work.WorkManager
 import javax.inject.Inject
 
 /**
@@ -59,6 +61,8 @@ class SettingsViewModel @Inject constructor(
         val videoHashRunning: Boolean = false,
         val videoHashStatus: String = "",
         // 界面
+        val darkMode: Boolean = false,
+        val dynamicColor: Boolean = false,
         val silentJumpApp: Boolean = false
     )
 
@@ -86,6 +90,8 @@ class SettingsViewModel @Inject constructor(
         prefs.videoHashSuffix,
         prefs.videoHashRunning,
         prefs.videoHashStatus,
+        prefs.darkMode,
+        prefs.dynamicColor,
         prefs.silentJumpApp
     ) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -100,12 +106,34 @@ class SettingsViewModel @Inject constructor(
             videoHashSuffix = values[7] as String,
             videoHashRunning = values[8] as Boolean,
             videoHashStatus = values[9] as String,
-            silentJumpApp = values[10] as Boolean
+            darkMode = values[10] as Boolean,
+            dynamicColor = values[11] as Boolean,
+            silentJumpApp = values[12] as Boolean
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
     init {
         refreshPermissions()
+        viewModelScope.launch(Dispatchers.IO) { repairRunningFlag() }
+    }
+
+    /**
+     * 进程被杀导致 Worker 未能复位时，videoHashRunning 会残留 true（设置页永远转圈）。
+     * 打开设置页时查询唯一任务实际状态：无在途（RUNNING/ENQUEUED）任务则复位；
+     * 查询失败保守不复位。
+     */
+    private suspend fun repairRunningFlag() {
+        if (!prefs.videoHashRunning.first()) return
+        val hasActiveWork = runCatching {
+            WorkManager.getInstance(appContext)
+                .getWorkInfosForUniqueWork(VideoHashWorker.WORK_NAME_ONETIME)
+                .get()
+                .any { !it.state.isFinished }
+        }.getOrDefault(true)
+        if (!hasActiveWork) {
+            prefs.setVideoHashRunning(false)
+            prefs.setVideoHashStatus("上次任务未正常结束，已重置")
+        }
     }
 
     /** 权限授权状态刷新（照源 updateData 的 SDK 分支判定；从系统设置返回后由 ON_RESUME 触发） */
@@ -132,6 +160,8 @@ class SettingsViewModel @Inject constructor(
     fun setAutostartOnBoot(value: Boolean) = set(value, prefs::setAutostartOnBoot)
     fun setAutoOpenWeb(value: Boolean) = set(value, prefs::setAutoOpenWeb)
     fun setNoMemoryCache(value: Boolean) = set(value, prefs::setNoMemoryCache)
+    fun setDarkMode(value: Boolean) = set(value, prefs::setDarkMode)
+    fun setDynamicColor(value: Boolean) = set(value, prefs::setDynamicColor)
     fun setSilentJumpApp(value: Boolean) = set(value, prefs::setSilentJumpApp)
 
     private fun set(value: Boolean, setter: suspend (Boolean) -> Unit) {
@@ -140,9 +170,12 @@ class SettingsViewModel @Inject constructor(
 
     // ---------- 数据目录 ----------
 
-    /** 空串回退默认目录（回退逻辑在 Repository，照源 AppConfig.dataDir setter） */
+    /** 空串回退默认目录（回退逻辑在 Repository，照源 AppConfig.dataDir setter）；重启服务后生效 */
     fun setDataDir(path: String) {
-        viewModelScope.launch { prefs.setDataDir(path) }
+        viewModelScope.launch {
+            prefs.setDataDir(path)
+            snack("数据目录已保存，重启 OpenList 服务后生效")
+        }
     }
 
     // ---------- 视频洗码 ----------

@@ -31,20 +31,24 @@ class OpenListEngine @Inject constructor() : CoreEngine, Event, LogCallback {
     private val _logs = MutableSharedFlow<EngineLog>(extraBufferCapacity = LOG_BUFFER_CAPACITY)
     override val logs: SharedFlow<EngineLog> = _logs.asSharedFlow()
 
-    /** 设置数据目录并注册回调（幂等，源项目 startup 前置步骤）。 */
-    private fun init(dataDir: String) {
+    /** 设置数据目录并注册回调（幂等，源项目 startup 前置步骤）。成功返回 true。 */
+    private fun init(dataDir: String): Boolean =
         runCatching {
             Alistlib.setConfigData(dataDir)
             Alistlib.setConfigLogStd(true)
             Alistlib.init(this, this)
-        }.onFailure {
-            Log.e(TAG, "init:", it)
-        }
-    }
+        }.fold(
+            onSuccess = { true },
+            onFailure = {
+                Log.e(TAG, "init:", it)
+                false
+            },
+        )
 
     override fun startup(dataDir: String) {
         Log.d(TAG, "startup: $dataDir")
-        init(dataDir)
+        // 数据目录未就绪时不再启动，避免内核在错误目录/未初始化状态下起服务
+        if (!init(dataDir)) return
         runCatching { Alistlib.start() }.onFailure {
             Log.e(TAG, "start:", it)
         }
@@ -57,15 +61,25 @@ class OpenListEngine @Inject constructor() : CoreEngine, Event, LogCallback {
         }
     }
 
-    override fun isRunning(): Boolean = Alistlib.isRunning("")
+    /**
+     * 任一 server 存活即视为运行。
+     * Go 侧 IsRunning("") 语义为 http&&https&&unix 全部存活（默认仅启用 HTTP，
+     * 恒为 false），会导致服务销毁后兜底关闭被跳过、内核成孤儿，故按类型探测取或。
+     */
+    override fun isRunning(): Boolean =
+        Alistlib.isRunning("http") || Alistlib.isRunning("https") || Alistlib.isRunning("unix")
 
-    override fun setAdminPassword(dataDir: String, password: String) {
-        // 与源项目一致：未运行时先初始化内核再改密
-        if (!isRunning()) init(dataDir)
+    override fun setAdminPassword(dataDir: String, password: String): Boolean {
+        // 与源项目一致：未运行时先初始化内核再改密；初始化失败直接返回
+        if (!isRunning() && !init(dataDir)) {
+            Log.e(TAG, "setAdminPassword: engine not initialized")
+            return false
+        }
 
         Log.d(TAG, "setAdminPassword: $dataDir")
-        Alistlib.setConfigData(dataDir)
-        Alistlib.setAdminPassword(password)
+        return runCatching { Alistlib.setAdminPassword(password) }
+            .onFailure { Log.e(TAG, "setAdminPassword:", it) }
+            .isSuccess
     }
 
     override fun getOutboundIP(): String = Alistlib.getOutboundIPString()

@@ -3,6 +3,7 @@ package com.xaxka.openlist.ui.web
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.DownloadManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xaxka.openlist.ui.components.FlatLinearProgress
 import com.xaxka.openlist.ui.components.SnackAction
 import com.xaxka.openlist.ui.components.SnackBarHost
@@ -67,8 +69,8 @@ private class WebCallbacks(
     val onCanGoBackChanged: (Boolean) -> Unit,
 )
 
-/** scheme 白名单（照源 web.dart:96-104） */
-private val ALLOWED_SCHEMES = setOf("http", "https", "file", "chrome", "data", "javascript", "about")
+/** scheme 白名单（照源 web.dart:96-104）；blob 由 WebView 自行处理，留在页内 */
+private val ALLOWED_SCHEMES = setOf("http", "https", "file", "chrome", "data", "javascript", "about", "blob")
 
 /**
  * Web 页（照源 tmp/lib/pages/web/web.dart）：
@@ -90,16 +92,18 @@ fun WebScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableFloatStateOf(0f) }
     var canGoBack by remember { mutableStateOf(false) }
-    val darkTheme = isSystemInDarkTheme()
+    // 深色渲染 = 系统深色 或 界面「深色模式」偏好（应用外壳深色时网页同步深色）
+    val appDarkMode by viewModel.darkMode.collectAsStateWithLifecycle()
+    val darkTheme = isSystemInDarkTheme() || appDarkMode
     val chromeColor = if (darkTheme) WebDarkSurface else MaterialTheme.colorScheme.surface
 
-    // 状态栏图标外观：深色顶条上切浅色图标；离开 Web 页恢复 App 固定浅色样式
+    // 状态栏图标外观：深色顶条上切浅色图标；离开 Web 页按当前应用主题恢复
     val view = LocalView.current
     DisposableEffect(view, darkTheme) {
         val controller = view.context.findActivity()?.window
             ?.let { WindowCompat.getInsetsController(it, view) }
         controller?.isAppearanceLightStatusBars = !darkTheme
-        onDispose { controller?.isAppearanceLightStatusBars = true }
+        onDispose { controller?.isAppearanceLightStatusBars = !darkTheme }
     }
 
     // 端口发现 / 自愈成功 / 再点当前 tab → 重载
@@ -328,10 +332,37 @@ private val FilenameStarPattern =
 private val FilenamePlainPattern =
     Regex("""filename\s*=\s*"?([^";]+)"?""", RegexOption.IGNORE_CASE)
 
-/** 静默拉起外部 scheme：try startActivity，失败吞掉 */
+/**
+ * 拉起外部 scheme：
+ * - intent:// 链接按 Chrome 约定解析 `#Intent;...;end` 结构（清除显式组件/selector，
+ *   防止网页指定任意组件）；目标 App 不存在时回退 browser_fallback_url（若有）；
+ * - 其余 scheme 直接 ACTION_VIEW。
+ */
+private const val EXTRA_BROWSER_FALLBACK_URL = "browser_fallback_url"
+
 private fun tryStartActivityForUri(context: Context, uri: Uri) {
+    val parsed = runCatching {
+        if (uri.scheme?.equals("intent", true) == true) {
+            Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME).apply {
+                component = null
+                selector = null
+            }
+        } else {
+            null
+        }
+    }.getOrNull()
+
     try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val intent = parsed ?: Intent(Intent.ACTION_VIEW, uri)
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (e: ActivityNotFoundException) {
+        val fallback = parsed?.getStringExtra(EXTRA_BROWSER_FALLBACK_URL) ?: return
+        runCatching {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(fallback))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
     } catch (_: Exception) {
     }
 }

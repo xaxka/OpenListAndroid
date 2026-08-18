@@ -29,9 +29,11 @@ interface CoreEngine {
     /** 关闭内核，timeoutMs 为内核等待超时。 */
     fun shutdown(timeoutMs: Long)
 
+    /** 任一 server 存活即运行（http/https/unix 取或）。 */
     fun isRunning(): Boolean
 
-    fun setAdminPassword(dataDir: String, password: String)
+    /** 设置管理员密码；返回是否成功（内核未初始化/调用失败均返回 false）。 */
+    fun setAdminPassword(dataDir: String, password: String): Boolean
 
     fun getOutboundIP(): String
 }

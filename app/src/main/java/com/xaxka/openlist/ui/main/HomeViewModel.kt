@@ -71,12 +71,16 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
-     * 设置 admin 密码；照源行为（AList.setAdminPassword 内部 runCatching 吞错）静默容错，
-     * 调用方在确认时先行 Snackbar 明文展示密码 1s。
+     * 设置 admin 密码；确认时调用方先行 Snackbar 明文展示密码 1s（照源 alist.dart:41-47）。
+     * 失败（内核未初始化/底层异常）经 [passwordSetEvents] 通知 UI 提示。
      */
+    private val _passwordSetEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val passwordSetEvents: SharedFlow<Unit> = _passwordSetEvents.asSharedFlow()
+
     fun setAdminPassword(password: String) {
         viewModelScope.launch {
-            runCatching { serverManager.setAdminPassword(password) }
+            val ok = runCatching { serverManager.setAdminPassword(password) }.getOrDefault(false)
+            if (!ok) _passwordSetEvents.tryEmit(Unit)
         }
     }
 }

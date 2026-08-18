@@ -171,11 +171,11 @@ class OpenListService : Service() {
 
     @Suppress("DEPRECATION")
     private fun buildNotification(state: ServerState): Notification {
-        // Android 12(S)+ 必须指定 PendingIntent flag
+        // Android 12(S)+ 必须指定 PendingIntent flag；低版本补 UPDATE_CURRENT 以刷新既有意图
         val pendingFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             PendingIntent.FLAG_IMMUTABLE
         } else {
-            0
+            PendingIntent.FLAG_UPDATE_CURRENT
         }
 
         // 通知点击 → 启动入口（Manifest MAIN/LAUNCHER），等价源 MainActivity 显式 Intent

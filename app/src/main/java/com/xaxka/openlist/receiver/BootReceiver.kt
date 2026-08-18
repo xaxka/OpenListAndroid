@@ -31,7 +31,8 @@ class BootReceiver : BroadcastReceiver() {
             try {
                 // 读取失败视为未开启，避免崩溃导致重复分发
                 val enabled = runCatching { prefs.autostartOnBoot.first() }.getOrDefault(false)
-                if (enabled) serverManager.start(context)
+                // 个别 ROM 拦截后台启动前台服务会抛异常，吞掉避免开机即崩
+                if (enabled) runCatching { serverManager.start(context) }
             } finally {
                 pending.finish()
             }

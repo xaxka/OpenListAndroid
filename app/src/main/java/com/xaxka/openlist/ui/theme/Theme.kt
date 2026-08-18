@@ -8,14 +8,19 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+import android.os.Build
 import kotlin.math.sqrt
 
 /**
- * Blue Light UI 全局主题：固定浅色单方案。
- * 原则 5「可预期」：固定浅色、禁动态取色；darkTheme / dynamicColor 参数仅为
- * 兼容保留，取值一律忽略（§7.1 移植指南）。
+ * Blue Light UI 全局主题：默认浅色单方案（原则 5「可预期」）。
+ * 界面偏好「深色模式 / 动态取色」开启时切换深色 / Material You 方案
+ * （照源 AppConfig 界面组，偏好存于 AppPrefsRepository，默认均关闭）。
  */
 private val BlueLightColorScheme: ColorScheme = lightColorScheme(
     primary = OpenListPrimary,
@@ -54,6 +59,25 @@ private val BlueLightColorScheme: ColorScheme = lightColorScheme(
     surfaceContainer = OpenListSurfaceContainer,
     surfaceContainerHigh = OpenListSurfaceContainerHigh,
     surfaceContainerHighest = OpenListSurfaceContainerHighest,
+)
+
+/** 深色方案：与浅色同源令牌的明度反转版（未覆盖 token 走 Material 深色基线） */
+private val BlueDarkColorScheme: ColorScheme = darkColorScheme(
+    primary = DarkPrimary,
+    onPrimary = DarkOnPrimary,
+    primaryContainer = DarkPrimaryContainer,
+    onPrimaryContainer = DarkOnPrimaryContainer,
+    secondary = DarkSecondary,
+    onSecondary = DarkOnSecondary,
+    error = DarkError,
+    onError = DarkOnError,
+    background = DarkBackground,
+    onBackground = DarkOnBackground,
+    surface = DarkSurface,
+    onSurface = DarkOnSurface,
+    surfaceVariant = DarkSurfaceVariant,
+    onSurfaceVariant = DarkOnSurfaceVariant,
+    outline = DarkOutline,
 )
 
 /** 主题 Shapes：4（输入框/菜单）/ 8（小控件）/ 12（默认卡片）/ 16（大卡）/ 28（弹层） */
@@ -95,16 +119,26 @@ val AnimGetSnack = tween<Float>(durationMillis = 1000, easing = EaseOutCirc)
 val AnimDialogOpen = tween<Float>(durationMillis = 150, easing = LinearEasing)
 
 /**
- * 全局主题入口：固定 Blue Light 浅色方案。
+ * 全局主题入口：默认 Blue Light 浅色；darkTheme 切换深色方案，
+ * dynamicColor 在 Android 12+ 且开启时优先取 Material You 动态色。
  */
 @Composable
 fun OpenListTheme(
-    @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = false, // 兼容参数：固定浅色，值被忽略
-    @Suppress("UNUSED_PARAMETER") dynamicColor: Boolean = false, // 兼容参数：禁动态取色，值被忽略
+    darkTheme: Boolean = false,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+
+        darkTheme -> BlueDarkColorScheme
+        else -> BlueLightColorScheme
+    }
     MaterialTheme(
-        colorScheme = BlueLightColorScheme,
+        colorScheme = colorScheme,
         typography = OpenListTypography,
         shapes = OpenListShapes,
         content = content,
