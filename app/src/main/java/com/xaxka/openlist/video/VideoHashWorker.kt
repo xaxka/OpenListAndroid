@@ -16,7 +16,9 @@ import com.xaxka.openlist.R
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
@@ -113,12 +115,19 @@ class VideoHashWorker @AssistedInject constructor(
             val doneTitle = if (mode == MODE_RESTORE) "还原完成" else "洗码完成"
             showNotification("$doneTitle：${status.lineSequence().firstOrNull().orEmpty()}", ongoing = false)
             Result.success()
+        } catch (ce: CancellationException) {
+            // APPEND_OR_REPLACE 取消在途任务：置状态后原样上抛，让 Worker 正常进入 CANCELLED
+            withContext(NonCancellable) { prefs.setVideoHashStatus("任务已取消") }
+            throw ce
         } catch (e: Exception) {
             prefs.setVideoHashStatus("处理失败: ${e.message}")
             showNotification("处理失败: ${e.message}", ongoing = false)
             Result.failure()
         } finally {
-            prefs.setVideoHashRunning(false)
+            // 取消路径下挂起函数会立即再抛 CancellationException，NonCancellable 保证复位执行
+            withContext(NonCancellable) {
+                prefs.setVideoHashRunning(false)
+            }
         }
     }
 

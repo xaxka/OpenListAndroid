@@ -77,6 +77,32 @@ val LogDefault = Color(0xFF1A1C1E) // 未知级别回退 → textPrimary
 val WebProgressTrack = Color(0xFFE6E8EB)
 val WebProgressActive = Color(0xFF91C6FF)
 
+// WebView 跟随系统深色（App 外壳固定浅色，网页内容按系统深色渲染）：
+// 底色对齐 OpenList Web 暗色主题背景（Radix slate1），进度条轨道用 slate3
+val WebDarkSurface = Color(0xFF18191B)
+val WebDarkProgressTrack = Color(0xFF2A2D33)
+
 // Snackbar 固定配色（§2.1 inverseSurface / inverseOnSurface）
 val SnackBackground = Color(0xFF2F3033)
 val SnackOnBackground = Color(0xFFF7F7F9)
+
+/*
+ * 深色方案令牌（界面偏好「深色模式」开启时生效，默认关闭保持 Blue Light 浅色）：
+ * 与浅色令牌同源（主强调同色相），仅明度反转；卡片体系仍以层次微差表达，
+ * 未逐 token 复刻，darkColorScheme() 未覆盖项走 Material 基线。
+ */
+val DarkPrimary = Color(0xFF9AC7FF)
+val DarkOnPrimary = Color(0xFF00305B)
+val DarkPrimaryContainer = Color(0xFF1E4A7A)
+val DarkOnPrimaryContainer = Color(0xFFD4E3FF)
+val DarkSecondary = Color(0xFFAEC6F0)
+val DarkOnSecondary = Color(0xFF16294A)
+val DarkError = Color(0xFFFFB4AB)
+val DarkOnError = Color(0xFF690005)
+val DarkBackground = Color(0xFF111418)
+val DarkOnBackground = Color(0xFFE2E2E7)
+val DarkSurface = Color(0xFF111418)
+val DarkOnSurface = Color(0xFFE2E2E7)
+val DarkSurfaceVariant = Color(0xFF2A2D33)
+val DarkOnSurfaceVariant = Color(0xFFC4C6CF)
+val DarkOutline = Color(0xFF8E9199)

@@ -33,7 +33,8 @@ class SwitchServerActivity : ComponentActivity() {
             else -> serverManager.toggle(this)
         }
 
-        ShortCuts.syncDynamic(this, serverManager.state.value)
+        // 动态快捷方式由 ServerManager 在服务到达终态（RUNNING/STOPPED）时统一同步，
+        // 不在此处按 STOPPING 中间态同步（曾导致停止后桌面仍显示「停止服务」）
         finish()
     }
 

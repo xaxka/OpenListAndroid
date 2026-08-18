@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import java.io.File
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -63,9 +64,10 @@ class AppPrefsRepository @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** 默认数据目录：getExternalFilesDir("data") 绝对路径（不可用时回退 filesDir） */
+    /** 默认数据目录：getExternalFilesDir("data") 绝对路径（不可用时回退 filesDir/data） */
     val defaultDataDir: String =
-        context.getExternalFilesDir("data")?.absolutePath ?: context.filesDir.absolutePath
+        context.getExternalFilesDir("data")?.absolutePath
+            ?: File(context.filesDir, "data").absolutePath
 
     // 读取损坏时回退空配置（DataStore 惯例）
     private val data = context.openlistPrefs.data

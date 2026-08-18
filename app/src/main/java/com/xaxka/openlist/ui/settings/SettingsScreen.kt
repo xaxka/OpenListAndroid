@@ -17,11 +17,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.OpenInBrowser
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanToolAlt
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.PowerSettingsNew
@@ -313,6 +315,20 @@ fun SettingsScreen(
 
             // ---------- 界面 ----------
             SettingsDividerPreference(TEXT_UI)
+            SettingsSwitchPreference(
+                title = "深色模式",
+                subtitle = "开启后应用使用深色主题，网页页同步深色渲染",
+                icon = Icons.Outlined.DarkMode,
+                value = state.darkMode,
+                onCheckedChange = viewModel::setDarkMode
+            )
+            SettingsSwitchPreference(
+                title = "动态取色",
+                subtitle = "跟随系统壁纸取色（Android 12+；深色模式下取深色动态色）",
+                icon = Icons.Outlined.Palette,
+                value = state.dynamicColor,
+                onCheckedChange = viewModel::setDynamicColor
+            )
             SettingsSwitchPreference(
                 title = "静默跳转APP",
                 subtitle = "跳转APP时，不弹出提示框",

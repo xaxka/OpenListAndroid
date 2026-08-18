@@ -6,14 +6,18 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.xaxka.openlist.R
 import com.xaxka.openlist.bridge.CoreConfig
+import com.xaxka.openlist.bridge.CoreConfigSync
 import com.xaxka.openlist.bridge.CoreEngine
 import com.xaxka.openlist.bridge.EngineEvent
 import com.xaxka.openlist.data.log.LogBuffer
 import com.xaxka.openlist.data.log.LoggableLevel
+import com.xaxka.openlist.data.prefs.AppPrefsRepository
+import com.xaxka.openlist.system.ShortCuts
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.time.Instant
@@ -24,6 +28,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,9 +57,14 @@ class ServerManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val engine: CoreEngine,
     private val logBuffer: LogBuffer,
+    private val prefs: AppPrefsRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val core = ServerCore(engine, scope)
+
+    /** 内核数据目录：跟随设置页「data 文件夹路径」偏好（空白回退默认），下次启动生效。 */
+    private val _dataDir = MutableStateFlow(prefs.defaultDataDir)
+    val dataDir: String get() = _dataDir.value
 
     val state: StateFlow<ServerState> = core.state.asStateFlow()
 
@@ -68,12 +79,20 @@ class ServerManager @Inject constructor(
     private val _logs = MutableSharedFlow<ServerLog>(extraBufferCapacity = 256)
     val logs: SharedFlow<ServerLog> = _logs.asSharedFlow()
 
-    /** 内核数据目录（源项目默认 externalFilesDir/data）。 */
-    val dataDir: String
-        get() = appContext.getExternalFilesDir("data")?.absolutePath
-            ?: File(appContext.filesDir, "data").absolutePath
-
     init {
+        // 「data 文件夹路径」偏好 → 内核数据目录（引擎启动/改密/端口探测均取本值）
+        scope.launch {
+            prefs.dataDir.collect { _dataDir.value = it }
+        }
+        // 到达终态（RUNNING/STOPPED）时同步动态快捷方式：
+        // 覆盖 FAB/磁贴/快捷方式/开机自启全部启停入口，替代各入口手动同步（曾漏更新）
+        scope.launch {
+            core.state.collect { st ->
+                if (st == ServerState.RUNNING || st == ServerState.STOPPED) {
+                    runCatching { ShortCuts.syncDynamic(appContext, st) }
+                }
+            }
+        }
         // 内核日志 → LogBuffer + logs Flow
         scope.launch {
             engine.logs.collect { entry ->
@@ -142,8 +161,36 @@ class ServerManager @Inject constructor(
     fun onServiceStartCommand(context: Context) {
         when (state.value) {
             ServerState.STOPPED -> start(context) // START_STICKY 重建场景
-            ServerState.STARTING -> core.onEngineStartRequested(dataDir)
+            ServerState.STARTING -> core.onEngineStartRequested(dataDir, prepare = ::prepareCoreConfig)
             else -> Unit
+        }
+    }
+
+    /**
+     * 内核启动前置：把应用偏好同步进 <dataDir>/config.json。
+     * 必须先于 Alistlib.init()（bootstrap.InitConfig 读文件）执行，
+     * 失败不阻断启动（内核按现有 config.json 继续）。
+     */
+    private suspend fun prepareCoreConfig() {
+        // 用户自选目录可能尚不存在（SAF 选择仅授权不创建），内核落盘前先建好
+        val dir = File(dataDir)
+        if (!dir.exists() && !dir.mkdirs()) {
+            val msg = "数据目录创建失败：$dataDir"
+            Log.w(TAG, msg)
+            logBuffer.append(LoggableLevel.WARN, TAG, msg)
+        }
+        val noMemoryCache = prefs.noMemoryCache.first()
+        when (CoreConfigSync.syncNoMemoryCache(dataDir, noMemoryCache)) {
+            CoreConfigSync.Outcome.UPDATED -> {
+                val msg = "min_free_memory=${if (noMemoryCache) "-1" else "default"}（不使用内存缓存=$noMemoryCache）"
+                Log.i(TAG, "config.json updated: $msg")
+                logBuffer.append(LoggableLevel.INFO, TAG, msg)
+            }
+            CoreConfigSync.Outcome.NO_CHANGE -> Unit
+            CoreConfigSync.Outcome.FAILED -> {
+                Log.w(TAG, "sync config.json failed")
+                logBuffer.append(LoggableLevel.WARN, TAG, "config.json 偏好同步失败，按现有配置启动")
+            }
         }
     }
 
@@ -152,11 +199,11 @@ class ServerManager @Inject constructor(
         core.onServiceDestroyed()
     }
 
-    suspend fun setAdminPassword(password: String) {
+    /** 设置管理员密码；失败（内核未初始化/调用异常）返回 false。 */
+    suspend fun setAdminPassword(password: String): Boolean =
         withContext(Dispatchers.IO) {
             engine.setAdminPassword(dataDir, password)
         }
-    }
 
     /** 复制服务器地址到剪贴板（标签 OpenList），并提示。 */
     fun copyServerAddress(context: Context) {
@@ -202,6 +249,13 @@ internal class ServerCore(
 ) {
     val state = MutableStateFlow(ServerState.STOPPED)
 
+    /** 引擎启动协程（在途则拒绝重复 start 请求，防 Alistlib.Start 双重执行） */
+    @Volatile
+    private var startJob: Job? = null
+
+    /** 状态置位锁：markStarting 与 onEngineStartRequested 的 check-then-set 原子化 */
+    private val stateLock = Any()
+
     init {
         // 内核确认退出（onShutdown）→ STOPPED
         scope.launch {
@@ -215,37 +269,57 @@ internal class ServerCore(
 
     /** STOPPED → STARTING；非 STOPPED 返回 false。 */
     fun markStarting(): Boolean {
-        if (state.value != ServerState.STOPPED) return false
-        state.value = ServerState.STARTING
+        synchronized(stateLock) {
+            if (state.value != ServerState.STOPPED) return false
+            state.value = ServerState.STARTING
+        }
         return true
     }
 
     /** 服务侧就绪后启动引擎；startup 返回即 RUNNING（源项目语义）。 */
-    fun onEngineStartRequested(dataDir: String) {
-        when (state.value) {
-            ServerState.STOPPED -> state.value = ServerState.STARTING
-            ServerState.STARTING -> Unit
-            else -> return
-        }
-        scope.launch {
-            engine.startup(dataDir)
-            if (state.value == ServerState.STARTING) {
-                state.value = ServerState.RUNNING
-            } else {
-                // 启动期间收到停止/销毁：补一次关闭，防止孤儿内核
-                engine.shutdown(SHUTDOWN_TIMEOUT_MS)
-                transitionToStopped()
+    fun onEngineStartRequested(dataDir: String, prepare: suspend () -> Unit = {}) {
+        synchronized(stateLock) {
+            when (state.value) {
+                ServerState.STOPPED -> state.value = ServerState.STARTING
+                // 已在启动流程中（前台服务多次 onStartCommand 重入）：拒绝，防双启
+                ServerState.STARTING -> if (startJob?.isActive == true) return
+                else -> return
+            }
+            startJob = scope.launch {
+                try {
+                    // 启动前置（写 config.json 等）：失败不阻断，内核按现有配置启动
+                    runCatching { prepare() }
+                    engine.startup(dataDir)
+                    if (state.value == ServerState.STARTING) {
+                        state.value = ServerState.RUNNING
+                    } else {
+                        // 启动期间收到停止/销毁：补一次关闭，防止孤儿内核
+                        engine.shutdown(SHUTDOWN_TIMEOUT_MS)
+                        transitionToStopped()
+                    }
+                } finally {
+                    startJob = null
+                }
             }
         }
     }
 
     /** STARTING/RUNNING → STOPPING 并关闭内核；其他状态返回 false。 */
     fun requestStop(): Boolean {
-        if (state.value != ServerState.RUNNING && state.value != ServerState.STARTING) return false
-        state.value = ServerState.STOPPING
+        synchronized(stateLock) {
+            if (state.value != ServerState.RUNNING && state.value != ServerState.STARTING) return false
+            state.value = ServerState.STOPPING
+        }
         scope.launch {
             engine.shutdown(SHUTDOWN_TIMEOUT_MS)
-            if (!engine.isRunning()) transitionToStopped()
+            if (engine.isRunning()) {
+                // 超时兜底：重试一轮，仍存活也强制复位状态，避免 UI 永卡「关闭中」
+                engine.shutdown(SHUTDOWN_TIMEOUT_MS)
+                if (engine.isRunning()) {
+                    Log.e("OpenList", "engine still running after shutdown timeout")
+                }
+            }
+            transitionToStopped()
         }
         return true
     }

@@ -57,8 +57,8 @@ class OpenListTileService : TileService() {
     override fun onClick() {
         super.onClick()
         serverManager.toggle(this)
-        // 动态快捷方式随目标状态同步（等价源工程服务状态翻转时更新）
-        ShortCuts.syncDynamic(this, serverManager.state.value)
+        // 磁贴自身状态由上方 state 收集刷新；
+        // 动态快捷方式由 ServerManager 在服务到达终态（RUNNING/STOPPED）时统一同步
     }
 
     private fun updateTile(state: ServerState) {

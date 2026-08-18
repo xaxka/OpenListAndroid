@@ -22,6 +22,12 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
 
+    <!-- 无 UI 开关入口的调用保护：仅同签名应用（本应用自身/快捷方式）可拉起，
+         防止第三方应用任意启停服务器 -->
+    <permission
+        android:name="com.xaxka.openlist.permission.SWITCH_SERVER"
+        android:protectionLevel="signature" />
+
     <application
         android:name=".OpenListApp"
         android:allowBackup="true"
@@ -47,12 +53,13 @@
             </intent-filter>
         </activity>
 
-        <!-- 无 UI 开关入口：快捷方式/磁贴目标 -->
+        <!-- 无 UI 开关入口：快捷方式/磁贴目标（签名权限保护，仅本应用可调用） -->
         <activity
             android:name=".system.SwitchServerActivity"
             android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleInstance"
+            android:permission="com.xaxka.openlist.permission.SWITCH_SERVER"
             android:taskAffinity="openlist.switch"
             android:theme="@style/Theme.OpenList.Transparent" />
 

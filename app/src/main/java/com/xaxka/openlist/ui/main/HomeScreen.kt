@@ -86,6 +86,16 @@ fun HomeScreen(
         }
     }
 
+    // 密码设置失败提示（内核未初始化/底层异常），替代原先的静默吞错
+    LaunchedEffect(viewModel) {
+        viewModel.passwordSetEvents.collect {
+            snackbar.show(
+                message = "管理员密码设置失败，请确认服务可用后重试",
+                durationMs = 2_000,
+            )
+        }
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = {

@@ -3,6 +3,7 @@ package com.xaxka.openlist.service
 import com.xaxka.openlist.bridge.CoreEngine
 import com.xaxka.openlist.bridge.EngineEvent
 import com.xaxka.openlist.bridge.EngineLog
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -46,13 +47,18 @@ class ServerCoreTest {
         override fun shutdown(timeoutMs: Long) {
             shutdownCount++
             lastShutdownTimeout = timeoutMs
-            running = false
-            events.tryEmit(EngineEvent.Shutdown("http"))
+            if (shutdownStopsEngine) {
+                running = false
+                events.tryEmit(EngineEvent.Shutdown("http"))
+            }
         }
 
         override fun isRunning(): Boolean = running
 
-        override fun setAdminPassword(dataDir: String, password: String) = Unit
+        /** false 模拟 shutdown 超时未能停掉内核（孤儿场景） */
+        var shutdownStopsEngine = true
+
+        override fun setAdminPassword(dataDir: String, password: String): Boolean = true
 
         override fun getOutboundIP(): String = "192.168.1.2"
     }
@@ -158,5 +164,40 @@ class ServerCoreTest {
         advanceUntilIdle()
 
         assertEquals(1, engine.shutdownCount)
+    }
+
+    @Test
+    fun `STARTING期间重复start请求被拒绝不双重启动`() = runTest {
+        val engine = FakeCoreEngine()
+        val core = ServerCore(engine, eagerScope())
+        core.markStarting()
+
+        // prepare 挂起点模拟 DataStore 读取耗时，营造 STARTING + 在途启动协程窗口
+        val gate = CompletableDeferred<Unit>()
+        core.onEngineStartRequested("/data/dir") { gate.await() }
+        core.onEngineStartRequested("/data/dir") { gate.await() }
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(ServerState.RUNNING, core.state.value)
+        assertEquals(1, engine.startupCount)
+    }
+
+    @Test
+    fun `shutdown超时未能停内核时强制复位STOPPED`() = runTest {
+        val engine = FakeCoreEngine()
+        engine.shutdownStopsEngine = false // shutdown 不生效，内核仍在跑
+        val core = ServerCore(engine, eagerScope())
+        core.markStarting()
+        core.onEngineStartRequested("/data/dir")
+        advanceUntilIdle()
+
+        assertTrue(core.requestStop())
+        advanceUntilIdle()
+
+        // 重试一轮后仍存活：状态也必须复位，避免 UI 永卡「关闭中」
+        assertEquals(ServerState.STOPPED, core.state.value)
+        assertEquals(2, engine.shutdownCount)
     }
 }
