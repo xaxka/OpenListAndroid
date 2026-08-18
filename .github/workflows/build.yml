@@ -1,0 +1,131 @@
+name: build
+
+on:
+  push:
+    branches:
+      - "main"
+    paths-ignore:
+      - "*.md"
+      - "_docs/**"
+  pull_request:
+
+  workflow_dispatch:
+
+jobs:
+  # Beta 编译（对齐源项目 tmp/.github/workflows/build.yaml：OpenList beta 内核 + 签名 + 分 ABI APK）
+  beta:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      output: "${{ github.workspace }}/app/build/outputs/apk/release"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download OpenList Source Code (beta)
+        run: |
+          cd alist-lib/scripts
+          chmod +x *.sh
+          ./init_alist.sh beta
+          ./init_web.sh
+
+      - name: Mark OpenList Version as beta
+        run: echo "beta" > $GITHUB_WORKSPACE/app/src/main/assets/openlist_version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "${{ github.workspace }}/alist-lib/go.mod"
+          cache-dependency-path: "${{ github.workspace }}/alist-lib/go.sum"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r25c
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build OpenList Core (gomobile AAR)
+        run: |
+          cd $GITHUB_WORKSPACE/alist-lib/scripts
+          ./init_gomobile.sh
+          ./gobind.sh
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      # gobind.sh 按脚本内相对路径产出至 <root>/android/app/libs，接线到新工程 app/libs
+      - name: Wire AAR into app/libs
+        run: |
+          mkdir -p app/libs
+          mv -f android/app/libs/*.aar app/libs/
+          ls -la app/libs
+
+      - name: Upload AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: "OpenList-beta"
+          path: "${{ github.workspace }}/app/libs/*.aar"
+
+      # 与源项目同名 Secrets 键；gradle 侧由 app/build.gradle.kts 读取 local.properties
+      - name: Init Signature
+        run: |
+          touch local.properties
+          echo ALIAS_NAME='${{ secrets.ALIAS_NAME }}' >> local.properties
+          echo ALIAS_PASSWORD='${{ secrets.ALIAS_PASSWORD }}' >> local.properties
+          echo KEY_PASSWORD='${{ secrets.KEY_PASSWORD }}' >> local.properties
+          echo KEY_PATH='${{ github.workspace }}/app/key.jks' >> local.properties
+          # 从Secrets读取无换行符Base64解码, 然后保存到app/key.jks
+          echo ${{ secrets.KEY_STORE }} | base64 --decode > $GITHUB_WORKSPACE/app/key.jks
+
+      - name: Build Signed APK (split per ABI)
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      # 体积透视：每个 APK 应只含一个 lib/<abi>/ 目录；若出现多个说明 splits 泄漏
+      - name: Inspect APK native libs
+        run: |
+          ls -lh ${{ env.output }}/*.apk
+          for apk in ${{ env.output }}/*.apk; do
+            echo "=== $(basename $apk) ==="
+            unzip -l "$apk" | grep "lib/" || echo "(no native libs)"
+          done
+
+      - name: Upload missing_rules.txt
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "missing_rules-beta"
+          path: "${{ github.workspace }}/app/build/outputs/mapping/release/missing_rules.txt"
+
+      - name: Init APP Version Name
+        run: |
+          echo "ver_name=$(grep -m 1 'versionName' ${{ env.output }}/output-metadata.json | cut -d\" -f4)" >> $GITHUB_ENV
+
+      - name: Upload App To Artifact arm64-v8a
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "OpenListFlutter-beta-v${{ env.ver_name }}_arm64-v8a"
+          path: "${{ env.output }}/*arm64-v8a*.apk"
+          if-no-files-found: error
+
+      - name: Upload App To Artifact arm-v7a
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "OpenListFlutter-beta-v${{ env.ver_name }}_arm-v7a"
+          path: "${{ env.output }}/*armeabi-v7a*.apk"
+          if-no-files-found: error
+
+      - name: Upload App To Artifact x86_64
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "OpenListFlutter-beta-v${{ env.ver_name }}_x86_64"
+          path: "${{ env.output }}/*x86_64*.apk"
+          if-no-files-found: error

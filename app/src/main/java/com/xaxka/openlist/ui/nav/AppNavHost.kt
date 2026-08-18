@@ -1,0 +1,140 @@
+package com.xaxka.openlist.ui.nav
+
+import androidx.activity.ComponentActivity
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Preview
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.xaxka.openlist.R
+import com.xaxka.openlist.ui.main.HomeScreen
+import com.xaxka.openlist.ui.main.HomeViewModel
+import com.xaxka.openlist.ui.settings.SettingsScreen
+import com.xaxka.openlist.ui.theme.AnimPageFade
+import com.xaxka.openlist.ui.theme.Dimens
+import com.xaxka.openlist.ui.web.WebScreen
+import com.xaxka.openlist.ui.web.WebViewModel
+
+/** 底部导航路由（顺序/文案照源 main.dart：网页 / OpenList / 设置，默认选中主页） */
+object Routes {
+    const val WEB = "web"
+    const val HOME = "home"
+    const val SETTINGS = "settings"
+}
+
+private data class TabItem(
+    val route: String,
+    val label: String,
+    val icon: ImageVector? = null,
+    val logoRes: Int? = null,
+)
+
+@Composable
+fun AppNavHost(
+    navController: NavHostController = rememberNavController(),
+) {
+    // Activity 级共享 VM：openWebEvent（自动跳网页）与再点网页 tab 重载（源 onClickNavigationBar）
+    val activity = LocalContext.current as ComponentActivity
+    val homeViewModel: HomeViewModel = viewModel(activity)
+    val webViewModel: WebViewModel = viewModel(activity)
+
+    val tabs = remember {
+        listOf(
+            TabItem(Routes.WEB, "网页", icon = Icons.Filled.Preview),
+            TabItem(Routes.HOME, "OpenList", logoRes = R.drawable.openlist_logo),
+            TabItem(Routes.SETTINGS, "设置", icon = Icons.Filled.Settings),
+        )
+    }
+
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+
+    // 服务已运行且勾选「自动打开网页」→ 启动直达网页页（源 main.dart 行为）
+    LaunchedEffect(Unit) {
+        homeViewModel.openWebEvent.collect {
+            if (navController.currentDestination?.route == Routes.HOME) {
+                navController.navigate(Routes.WEB) {
+                    launchSingleTop = true
+                    popUpTo(Routes.HOME)
+                }
+            }
+        }
+    }
+
+    Scaffold(
+        // 各页自管顶部 inset（主页 TopAppBar / 网页页状态栏占位 / 设置页 statusBarsPadding），
+        // 关闭默认 systemBars 注入避免与页面内 padding 叠加成双倍留白
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                tabs.forEach { tab ->
+                    NavigationBarItem(
+                        selected = currentRoute == tab.route,
+                        onClick = {
+                            if (currentRoute == tab.route) {
+                                // 已在网页页时再点网页 tab → 重载（源 onClickNavigationBar）
+                                if (tab.route == Routes.WEB) webViewModel.requestReload()
+                            } else {
+                                navController.navigate(tab.route) {
+                                    popUpTo(Routes.HOME) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        },
+                        icon = {
+                            when {
+                                tab.icon != null ->
+                                    Icon(tab.icon, contentDescription = tab.label)
+                                tab.logoRes != null -> Icon(
+                                    painter = painterResource(tab.logoRes),
+                                    contentDescription = tab.label,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(Dimens.NavSvgIconSize),
+                                )
+                            }
+                        },
+                        label = { Text(tab.label) },
+                    )
+                }
+            }
+        },
+    ) { innerPadding ->
+        NavHost(
+            navController = navController,
+            startDestination = Routes.HOME,
+            modifier = Modifier.padding(innerPadding),
+            enterTransition = { fadeIn(AnimPageFade) },
+            exitTransition = { fadeOut(AnimPageFade) },
+            popEnterTransition = { fadeIn(AnimPageFade) },
+            popExitTransition = { fadeOut(AnimPageFade) },
+        ) {
+            composable(Routes.HOME) { HomeScreen(viewModel = homeViewModel) }
+            composable(Routes.WEB) { WebScreen(viewModel = webViewModel) }
+            composable(Routes.SETTINGS) { SettingsScreen() }
+        }
+    }
+}
