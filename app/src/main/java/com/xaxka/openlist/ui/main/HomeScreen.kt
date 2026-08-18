@@ -45,7 +45,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -179,13 +181,19 @@ private fun HomeTopBar(
             Text(
                 "OpenList - $coreVersion",
                 style = MaterialTheme.typography.titleLarge.copy(
-                    // titleLarge 行高 28sp > 字号 20sp：默认按字体 ascent/descent 比例
-                    // 分配 8sp 余量，字形视觉偏下；改为 Center 让字形在行高框内垂直居中
+                    // 与右侧图标垂直光学对齐的组合配置：
+                    // 1) includeFontPadding=false：关闭 Android 默认字体顶部填充（默认 true 时
+                    //    字形整体被压低；官方文档明确 LineHeightStyle 完整生效以其为 false 为前提）
+                    // 2) lineHeightStyle Center：行高 28sp 与字号 20sp 的 8sp 余量上下均分
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
                     lineHeightStyle = LineHeightStyle(
                         alignment = LineHeightStyle.Alignment.Center,
                         trim = LineHeightStyle.Trim.None,
                     ),
                 ),
+                // 窄屏/大字号下标题换行会占满整个栏高导致错位，单行 + 省略号兜底
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         },
         colors = TopAppBarDefaults.topAppBarColors(
