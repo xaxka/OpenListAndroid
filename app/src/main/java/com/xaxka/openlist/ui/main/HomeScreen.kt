@@ -31,7 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -154,7 +154,7 @@ fun HomeScreen(
 }
 
 /**
- * 顶栏：Blue Light 列表页模式——surface 冷白底与页面融为一体、TitleLarge 标题。
+ * 顶栏：primary 主题色底、TitleLarge 标题水平居中（CenterAlignedTopAppBar）。
  * 状态栏 inset 由外层 statusBarsPadding 承担（TopAppBar 自身 windowInsets 置零），
  * 保证 56dp 全部用于标题行，不被状态栏挤压。
  * actions 顺序：password（admin 密码）→ more_vert（更多菜单）。
@@ -166,7 +166,7 @@ private fun HomeTopBar(
     onSetPassword: () -> Unit,
     onAbout: () -> Unit,
 ) {
-    TopAppBar(
+    CenterAlignedTopAppBar(
         modifier = Modifier
             .statusBarsPadding()
             .height(Dimens.AppBarHeight),
@@ -177,7 +177,7 @@ private fun HomeTopBar(
                 style = MaterialTheme.typography.titleLarge,
             )
         },
-        colors = TopAppBarDefaults.topAppBarColors(
+        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
             containerColor = MaterialTheme.colorScheme.primary,
             scrolledContainerColor = MaterialTheme.colorScheme.primary,
             titleContentColor = MaterialTheme.colorScheme.onPrimary,
