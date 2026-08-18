@@ -9,6 +9,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.DownloadListener
@@ -35,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,6 +94,9 @@ fun WebScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableFloatStateOf(0f) }
     var canGoBack by remember { mutableStateOf(false) }
+    // 跨 tab 切换保留 WebView 状态：离开时 saveState，返回时 restoreState，
+    // 避免每次切换 tab 都销毁重建 WebView 导致网页重新加载
+    var webViewState by rememberSaveable { mutableStateOf<Bundle?>(null) }
     // 深色渲染 = 系统深色 或 界面「深色模式」偏好（应用外壳深色时网页同步深色）
     val appDarkMode by viewModel.darkMode.collectAsStateWithLifecycle()
     val darkTheme = isSystemInDarkTheme() || appDarkMode
@@ -111,11 +116,16 @@ fun WebScreen(
         viewModel.reloadEvents.collect { url -> webView?.loadUrl(url) }
     }
 
-    // 离开组合时销毁 WebView
+    // 离开组合时保存 WebView 状态并销毁；返回时从 webViewState 恢复，避免整页重载
     DisposableEffect(Unit) {
         onDispose {
-            webView?.stopLoading()
-            webView?.destroy()
+            webView?.let { wv ->
+                val bundle = Bundle()
+                wv.saveState(bundle)
+                webViewState = bundle
+                wv.stopLoading()
+                wv.destroy()
+            }
             webView = null
         }
     }
@@ -186,6 +196,7 @@ fun WebScreen(
                     createWebView(
                         context = ctx,
                         initialUrl = viewModel.urlToLoad.value,
+                        savedState = webViewState,
                         callbacks = callbacks,
                         darkTheme = darkTheme,
                     ).also { webView = it }
@@ -203,6 +214,7 @@ fun WebScreen(
 private fun createWebView(
     context: Context,
     initialUrl: String,
+    savedState: Bundle?,
     callbacks: WebCallbacks,
     darkTheme: Boolean,
 ): WebView =
@@ -267,7 +279,20 @@ private fun createWebView(
                 callbacks.onDownloadRequested(url, parseSuggestedFileName(contentDisposition, url))
             }
         )
-        loadUrl(initialUrl)
+        // 跨 tab 切换：有保存状态则恢复历史并重新加载当前页，否则首次加载
+        if (savedState != null) {
+            restoreState(savedState)
+            val restoredUrl = url
+            if (restoredUrl.isNullOrEmpty() || restoredUrl != initialUrl) {
+                // 无历史或地址已变更（如端口发现），加载最新地址
+                loadUrl(initialUrl)
+            } else {
+                // 同地址，恢复当前页（优先走缓存）
+                reload()
+            }
+        } else {
+            loadUrl(initialUrl)
+        }
     }
 
 /** 触发页面 resize 监听重排的最小脚本（复用页面自身 resize 适配逻辑，不注入具体实现） */
