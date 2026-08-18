@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.LineHeightStyle
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -168,13 +169,23 @@ private fun HomeTopBar(
 ) {
     CenterAlignedTopAppBar(
         modifier = Modifier
+            // 先铺主题色背景再 padding：背景覆盖状态栏区域（M3 Surface 背景只画 56dp
+            // 内容区，否则状态栏露出 Scaffold 浅底，与主题色栏形成断裂）
+            .background(MaterialTheme.colorScheme.primary)
             .statusBarsPadding()
             .height(Dimens.AppBarHeight),
         windowInsets = WindowInsets(0, 0, 0, 0),
         title = {
             Text(
                 "OpenList - $coreVersion",
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleLarge.copy(
+                    // titleLarge 行高 28sp > 字号 20sp：默认按字体 ascent/descent 比例
+                    // 分配 8sp 余量，字形视觉偏下；改为 Center 让字形在行高框内垂直居中
+                    lineHeightStyle = LineHeightStyle(
+                        alignment = LineHeightStyle.Alignment.Center,
+                        trim = LineHeightStyle.Trim.None,
+                    ),
+                ),
             )
         },
         colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
