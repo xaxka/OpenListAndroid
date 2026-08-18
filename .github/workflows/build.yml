@@ -119,7 +119,9 @@ jobs:
           echo ${{ secrets.KEY_STORE }} | base64 --decode > $GITHUB_WORKSPACE/app/key.jks
 
       - name: Build Signed APK (split per ABI)
-        run: ./gradlew :app:assembleRelease --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon
 
       # 体积透视：每个 APK 应只含一个 lib/<abi>/ 目录；若出现多个说明 splits 泄漏
       - name: Inspect APK native libs
