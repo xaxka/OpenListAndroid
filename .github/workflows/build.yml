@@ -23,7 +23,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 解析 OpenList beta 分支远程 HEAD SHA，作为 AAR / Go build cache 的内容寻址 key。
+      # beta 是 moving ref，必须用实际 commit SHA 做 key，避免 tag 漂移后命中陈旧 AAR。
+      - name: Resolve OpenList beta ref
+        id: alist-ref
+        run: |
+          SHA=$(git ls-remote https://github.com/OpenListTeam/OpenList.git refs/heads/beta | cut -f1)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "Resolved OpenList beta -> $SHA"
+
+      # AAR 内容寻址缓存：OpenList 源码 rev + alistlib 绑定代码 + gobind 脚本未变时直接复用 AAR，
+      # 跳过 setup-go / setup-ndk / init_gomobile / gobind / Wire AAR 整条链（含 Upload AAR）。
+      - name: Cache Go AAR
+        id: aar-cache
+        uses: actions/cache@v4
+        with:
+          path: app/libs
+          key: aar-beta-${{ steps.alist-ref.outputs.sha }}-${{ hashFiles('alist-lib/alistlib/**/*.go', 'alist-lib/scripts/gobind.sh') }}
+
       - name: Download OpenList Source Code (beta)
+        if: steps.aar-cache.outputs.cache-hit != 'true'
         run: |
           cd alist-lib/scripts
           chmod +x *.sh
@@ -34,9 +53,21 @@ jobs:
         run: echo "beta" > $GITHUB_WORKSPACE/app/src/main/assets/openlist_version
 
       - uses: actions/setup-go@v5
+        if: steps.aar-cache.outputs.cache-hit != 'true'
         with:
           go-version-file: "${{ github.workspace }}/alist-lib/go.mod"
           cache-dependency-path: "${{ github.workspace }}/alist-lib/go.sum"
+
+      # Go build cache（~/.cache/go-build）：setup-go 只缓存模块下载，不缓存编译产物；
+      # gobind 编译 OpenList 内核的中间产物复用，二次编译显著加速。restore-keys 允许跨 commit 部分命中。
+      - name: Cache Go build
+        if: steps.aar-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-${{ steps.alist-ref.outputs.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-
 
       - uses: actions/setup-java@v4
         with:
@@ -44,6 +75,7 @@ jobs:
           java-version: '17'
 
       - uses: nttld/setup-ndk@v1
+        if: steps.aar-cache.outputs.cache-hit != 'true'
         id: setup-ndk
         with:
           ndk-version: r25c
@@ -52,6 +84,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build OpenList Core (gomobile AAR)
+        if: steps.aar-cache.outputs.cache-hit != 'true'
         run: |
           cd $GITHUB_WORKSPACE/alist-lib/scripts
           ./init_gomobile.sh
@@ -61,12 +94,14 @@ jobs:
 
       # gobind.sh 按脚本内相对路径产出至 <root>/android/app/libs，接线到新工程 app/libs
       - name: Wire AAR into app/libs
+        if: steps.aar-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p app/libs
           mv -f android/app/libs/*.aar app/libs/
           ls -la app/libs
 
       - name: Upload AAR
+        if: steps.aar-cache.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: "OpenList-beta"

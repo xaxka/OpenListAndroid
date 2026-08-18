@@ -13,7 +13,8 @@ fi
 echo "OpenList - ${TAG_NAME}"
 rm -rf ./src
 unset GIT_WORK_TREE
-git clone --branch "$TAG_NAME" https://github.com/OpenListTeam/OpenList.git ./src
+# --depth 1：CI 只需要 beta 分支当前快照，浅克隆省掉全历史下载
+git clone --depth 1 --branch "$TAG_NAME" https://github.com/OpenListTeam/OpenList.git ./src
 rm -rf ./src/.git
 
 mv -f ./src/* ../
