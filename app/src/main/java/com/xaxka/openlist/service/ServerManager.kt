@@ -6,14 +6,17 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.xaxka.openlist.R
 import com.xaxka.openlist.bridge.CoreConfig
+import com.xaxka.openlist.bridge.CoreConfigSync
 import com.xaxka.openlist.bridge.CoreEngine
 import com.xaxka.openlist.bridge.EngineEvent
 import com.xaxka.openlist.data.log.LogBuffer
 import com.xaxka.openlist.data.log.LoggableLevel
+import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.time.Instant
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,6 +55,7 @@ class ServerManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val engine: CoreEngine,
     private val logBuffer: LogBuffer,
+    private val prefs: AppPrefsRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val core = ServerCore(engine, scope)
@@ -142,8 +147,29 @@ class ServerManager @Inject constructor(
     fun onServiceStartCommand(context: Context) {
         when (state.value) {
             ServerState.STOPPED -> start(context) // START_STICKY 重建场景
-            ServerState.STARTING -> core.onEngineStartRequested(dataDir)
+            ServerState.STARTING -> core.onEngineStartRequested(dataDir, prepare = ::prepareCoreConfig)
             else -> Unit
+        }
+    }
+
+    /**
+     * 内核启动前置：把应用偏好同步进 <dataDir>/config.json。
+     * 必须先于 Alistlib.init()（bootstrap.InitConfig 读文件）执行，
+     * 失败不阻断启动（内核按现有 config.json 继续）。
+     */
+    private suspend fun prepareCoreConfig() {
+        val noMemoryCache = prefs.noMemoryCache.first()
+        when (CoreConfigSync.syncNoMemoryCache(dataDir, noMemoryCache)) {
+            CoreConfigSync.Outcome.UPDATED -> {
+                val msg = "min_free_memory=${if (noMemoryCache) "-1" else "default"}（不使用内存缓存=$noMemoryCache）"
+                Log.i(TAG, "config.json updated: $msg")
+                logBuffer.append(LoggableLevel.INFO, TAG, msg)
+            }
+            CoreConfigSync.Outcome.NO_CHANGE -> Unit
+            CoreConfigSync.Outcome.FAILED -> {
+                Log.w(TAG, "sync config.json failed")
+                logBuffer.append(LoggableLevel.WARN, TAG, "config.json 偏好同步失败，按现有配置启动")
+            }
         }
     }
 
@@ -221,13 +247,15 @@ internal class ServerCore(
     }
 
     /** 服务侧就绪后启动引擎；startup 返回即 RUNNING（源项目语义）。 */
-    fun onEngineStartRequested(dataDir: String) {
+    fun onEngineStartRequested(dataDir: String, prepare: suspend () -> Unit = {}) {
         when (state.value) {
             ServerState.STOPPED -> state.value = ServerState.STARTING
             ServerState.STARTING -> Unit
             else -> return
         }
         scope.launch {
+            // 启动前置（写 config.json 等）：失败不阻断，内核按现有配置启动
+            runCatching { prepare() }
             engine.startup(dataDir)
             if (state.value == ServerState.STARTING) {
                 state.value = ServerState.RUNNING

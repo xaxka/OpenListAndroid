@@ -77,6 +77,11 @@ val LogDefault = Color(0xFF1A1C1E) // 未知级别回退 → textPrimary
 val WebProgressTrack = Color(0xFFE6E8EB)
 val WebProgressActive = Color(0xFF91C6FF)
 
+// WebView 跟随系统深色（App 外壳固定浅色，网页内容按系统深色渲染）：
+// 底色对齐 OpenList Web 暗色主题背景（Radix slate1），进度条轨道用 slate3
+val WebDarkSurface = Color(0xFF18191B)
+val WebDarkProgressTrack = Color(0xFF2A2D33)
+
 // Snackbar 固定配色（§2.1 inverseSurface / inverseOnSurface）
 val SnackBackground = Color(0xFF2F3033)
 val SnackOnBackground = Color(0xFFF7F7F9)
