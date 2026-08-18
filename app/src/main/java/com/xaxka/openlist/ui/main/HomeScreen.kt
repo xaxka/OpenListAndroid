@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -181,8 +182,10 @@ private fun HomeTopBar(
 ) {
     Box(
         modifier = Modifier
-            // 先铺主题色背景再 padding：背景覆盖状态栏区域（否则状态栏露出 Scaffold
-            // 浅底，与主题色栏形成断裂）
+            // 铺满横向：Box 默认包裹内容宽，Scaffold topBar 槽位传松约束时会缩到
+            // 标题宽度，右侧露出白底（实测蓝底只到 866px / 全宽 1272px）。
+            // 先 fillMaxWidth 再画背景，主题色覆盖整行含状态栏区域。
+            .fillMaxWidth()
             .background(MaterialTheme.colorScheme.primary)
             .statusBarsPadding()
             .height(Dimens.AppBarHeight),
