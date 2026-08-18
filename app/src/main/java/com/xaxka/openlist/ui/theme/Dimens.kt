@@ -63,6 +63,7 @@ object Dimens {
     val FABSize = 56.dp
     val FabIconStop = 48.dp
     val FabIconSend = 32.dp
+    val FabIconDot = 16.dp
 
     /** 图标按钮尺寸：满足触控目标 ≥44dp（§6），M3 最小 48dp 内的最紧凑合规值 */
     val IconButtonSize = 44.dp

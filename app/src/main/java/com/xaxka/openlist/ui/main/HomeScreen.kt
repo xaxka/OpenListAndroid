@@ -20,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Password
-import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -177,10 +177,10 @@ private fun HomeTopBar(
             )
         },
         colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-            titleContentColor = MaterialTheme.colorScheme.onSurface,
-            actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            containerColor = MaterialTheme.colorScheme.primary,
+            scrolledContainerColor = MaterialTheme.colorScheme.primary,
+            titleContentColor = MaterialTheme.colorScheme.onPrimary,
+            actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
         ),
         actions = {
             IconButton(
@@ -272,10 +272,11 @@ private fun SwitchServerFab(
             modifier = Modifier.rotate(animatedTurns * 360f),
         ) {
             if (isRunning) {
-                Icon(
-                    Icons.Outlined.Stop,
-                    contentDescription = Strings.TOGGLE_SERVER,
-                    modifier = Modifier.size(Dimens.FabIconStop),
+                // 运行态：白点指示器（照源 switch_floating_action_button 运行态）
+                Box(
+                    modifier = Modifier
+                        .size(Dimens.FabIconDot)
+                        .background(Color.White, ShapeFABCircle)
                 )
             } else {
                 Icon(

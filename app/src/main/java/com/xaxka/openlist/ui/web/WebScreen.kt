@@ -9,7 +9,6 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.DownloadListener
@@ -36,7 +35,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +73,21 @@ private class WebCallbacks(
 private val ALLOWED_SCHEMES = setOf("http", "https", "file", "chrome", "data", "javascript", "about", "blob")
 
 /**
+ * WebView 实例持有器：跨 tab 切换保留 WebView 实例，避免每次切换都重建导致网页重新加载。
+ * WebScreen 离开组合时不销毁 WebView（仅清本地引用），由 AppNavHost 在 Activity 销毁时统一清理。
+ */
+class WebViewStateHolder {
+    var webView: WebView? = null
+
+    /** Activity 销毁时清理 WebView */
+    fun destroy() {
+        webView?.stopLoading()
+        webView?.destroy()
+        webView = null
+    }
+}
+
+/**
  * Web 页（照源 tmp/lib/pages/web/web.dart）：
  * 顶部 4dp 进度条 + WebView；返回键先回退网页历史；外部 scheme 交系统；
  * 下载请求弹贴底确认条；加载失败自动拉起服务并重载。
@@ -87,6 +100,7 @@ private val ALLOWED_SCHEMES = setOf("http", "https", "file", "chrome", "data", "
 fun WebScreen(
     modifier: Modifier = Modifier,
     viewModel: WebViewModel = hiltViewModel(),
+    stateHolder: WebViewStateHolder,
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -94,9 +108,6 @@ fun WebScreen(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableFloatStateOf(0f) }
     var canGoBack by remember { mutableStateOf(false) }
-    // 跨 tab 切换保留 WebView 状态：离开时 saveState，返回时 restoreState，
-    // 避免每次切换 tab 都销毁重建 WebView 导致网页重新加载
-    var webViewState by rememberSaveable { mutableStateOf<Bundle?>(null) }
     // 深色渲染 = 系统深色 或 界面「深色模式」偏好（应用外壳深色时网页同步深色）
     val appDarkMode by viewModel.darkMode.collectAsStateWithLifecycle()
     val darkTheme = isSystemInDarkTheme() || appDarkMode
@@ -116,16 +127,10 @@ fun WebScreen(
         viewModel.reloadEvents.collect { url -> webView?.loadUrl(url) }
     }
 
-    // 离开组合时保存 WebView 状态并销毁；返回时从 webViewState 恢复，避免整页重载
+    // 跨 tab 切换：不销毁 WebView（实例由 stateHolder 持有保持运行），
+    // 仅清本地引用；Activity 销毁时由 AppNavHost 的 onDispose 统一清理
     DisposableEffect(Unit) {
         onDispose {
-            webView?.let { wv ->
-                val bundle = Bundle()
-                wv.saveState(bundle)
-                webViewState = bundle
-                wv.stopLoading()
-                wv.destroy()
-            }
             webView = null
         }
     }
@@ -193,13 +198,30 @@ fun WebScreen(
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    createWebView(
-                        context = ctx,
-                        initialUrl = viewModel.urlToLoad.value,
-                        savedState = webViewState,
-                        callbacks = callbacks,
-                        darkTheme = darkTheme,
-                    ).also { webView = it }
+                    val existing = stateHolder.webView
+                    if (existing != null) {
+                        // 跨 tab 重入：复用已有 WebView，刷新回调绑定
+                        existing.webViewClient = createWebViewClient(callbacks)
+                        existing.webChromeClient = createWebChromeClient(callbacks)
+                        // 地址变更（如端口发现）时加载新地址，否则保持当前页
+                        val expectedUrl = viewModel.urlToLoad.value
+                        val wvUrl = existing.url
+                        if (wvUrl == null || !wvUrl.startsWith(expectedUrl)) {
+                            existing.loadUrl(expectedUrl)
+                        }
+                        callbacks.onCanGoBackChanged(existing.canGoBack())
+                        existing
+                    } else {
+                        createWebView(
+                            context = ctx,
+                            initialUrl = viewModel.urlToLoad.value,
+                            callbacks = callbacks,
+                            darkTheme = darkTheme,
+                        )
+                    }.also {
+                        stateHolder.webView = it
+                        webView = it
+                    }
                 },
                 // MainActivity 声明 uiMode 自处理（不重建 Activity），深浅切换时同步 WebView
                 update = { it.applyRenderTheme(darkTheme) },
@@ -214,7 +236,6 @@ fun WebScreen(
 private fun createWebView(
     context: Context,
     initialUrl: String,
-    savedState: Bundle?,
     callbacks: WebCallbacks,
     darkTheme: Boolean,
 ): WebView =
@@ -235,65 +256,58 @@ private fun createWebView(
         applyRenderTheme(darkTheme)
         // SPA（rem/vw 适配）可能在视口未稳定时按错误基准布局，视图尺寸有效后补发 resize 触发重排
         attachViewportReflow()
-        webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val scheme = request.url.scheme?.lowercase() ?: return false
-                if (scheme in ALLOWED_SCHEMES) return false
-                // 外部 scheme（mailto/tel/intent/market/第三方私有协议）一律取消 WebView 内导航
-                callbacks.onExternalScheme(request.url)
-                return true
-            }
-
-            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-                callbacks.onPageStarted()
-            }
-
-            override fun onPageFinished(view: WebView, url: String?) {
-                callbacks.onPageFinished()
-                callbacks.onCanGoBackChanged(view.canGoBack())
-                // 覆盖「先加载完成、后视图才放大」的时序：加载完成后补发一次 resize
-                view.post { view.evaluateJavascript(REFLOW_SCRIPT, null) }
-            }
-
-            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                // 仅主文档失败触发自愈（照源语义；本回调 API23+，更低版本走下方旧回调）
-                if (request.isForMainFrame) {
-                    callbacks.onLoadError()
-                }
-            }
-
-            @Deprecated("Deprecated in Java")
-            override fun onReceivedError(view: WebView, errorCode: Int, description: String?, failingUrl: String?) {
-                // API 21-22：旧回调仅主资源
-                callbacks.onLoadError()
-            }
-        }
-        webChromeClient = object : WebChromeClient() {
-            override fun onProgressChanged(view: WebView, newProgress: Int) {
-                callbacks.onProgressChanged(newProgress)
-                callbacks.onCanGoBackChanged(view.canGoBack())
-            }
-        }
+        webViewClient = createWebViewClient(callbacks)
+        webChromeClient = createWebChromeClient(callbacks)
         setDownloadListener(
             DownloadListener { url, _, contentDisposition, _, _ ->
                 callbacks.onDownloadRequested(url, parseSuggestedFileName(contentDisposition, url))
             }
         )
-        // 跨 tab 切换：有保存状态则恢复历史并重新加载当前页，否则首次加载
-        if (savedState != null) {
-            restoreState(savedState)
-            val restoredUrl = url
-            if (restoredUrl.isNullOrEmpty() || restoredUrl != initialUrl) {
-                // 无历史或地址已变更（如端口发现），加载最新地址
-                loadUrl(initialUrl)
-            } else {
-                // 同地址，恢复当前页（优先走缓存）
-                reload()
-            }
-        } else {
-            loadUrl(initialUrl)
+        loadUrl(initialUrl)
+    }
+
+/** WebViewClient：外部 scheme 拦截、页面生命周期回调、加载失败自愈 */
+private fun createWebViewClient(callbacks: WebCallbacks) = object : WebViewClient() {
+    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        val scheme = request.url.scheme?.lowercase() ?: return false
+        if (scheme in ALLOWED_SCHEMES) return false
+        // 外部 scheme（mailto/tel/intent/market/第三方私有协议）一律取消 WebView 内导航
+        callbacks.onExternalScheme(request.url)
+        return true
+    }
+
+    override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+        callbacks.onPageStarted()
+    }
+
+    override fun onPageFinished(view: WebView, url: String?) {
+        callbacks.onPageFinished()
+        callbacks.onCanGoBackChanged(view.canGoBack())
+        // 覆盖「先加载完成、后视图才放大」的时序：加载完成后补发一次 resize
+        view.post { view.evaluateJavascript(REFLOW_SCRIPT, null) }
+    }
+
+    override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+        // 仅主文档失败触发自愈（照源语义；本回调 API23+，更低版本走下方旧回调）
+        if (request.isForMainFrame) {
+            callbacks.onLoadError()
         }
     }
+
+    @Deprecated("Deprecated in Java")
+    override fun onReceivedError(view: WebView, errorCode: Int, description: String?, failingUrl: String?) {
+        // API 21-22：旧回调仅主资源
+        callbacks.onLoadError()
+    }
+}
+
+/** WebChromeClient：进度与导航历史同步 */
+private fun createWebChromeClient(callbacks: WebCallbacks) = object : WebChromeClient() {
+    override fun onProgressChanged(view: WebView, newProgress: Int) {
+        callbacks.onProgressChanged(newProgress)
+        callbacks.onCanGoBackChanged(view.canGoBack())
+    }
+}
 
 /** 触发页面 resize 监听重排的最小脚本（复用页面自身 resize 适配逻辑，不注入具体实现） */
 private const val REFLOW_SCRIPT =

@@ -16,6 +16,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -37,6 +38,7 @@ import com.xaxka.openlist.ui.theme.AnimPageFade
 import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.web.WebScreen
 import com.xaxka.openlist.ui.web.WebViewModel
+import com.xaxka.openlist.ui.web.WebViewStateHolder
 
 /** 底部导航路由（顺序/文案照源 main.dart：网页 / OpenList / 设置，默认选中主页） */
 object Routes {
@@ -60,6 +62,11 @@ fun AppNavHost(
     val activity = LocalContext.current as ComponentActivity
     val homeViewModel: HomeViewModel = viewModel(activity)
     val webViewModel: WebViewModel = viewModel(activity)
+    // 跨 tab 切换保留 WebView 实例；Activity 销毁时统一清理
+    val webStateHolder = remember { WebViewStateHolder() }
+    DisposableEffect(webStateHolder) {
+        onDispose { webStateHolder.destroy() }
+    }
 
     val tabs = remember {
         listOf(
@@ -133,7 +140,7 @@ fun AppNavHost(
             popExitTransition = { fadeOut(AnimPageFade) },
         ) {
             composable(Routes.HOME) { HomeScreen(viewModel = homeViewModel) }
-            composable(Routes.WEB) { WebScreen(viewModel = webViewModel) }
+            composable(Routes.WEB) { WebScreen(viewModel = webViewModel, stateHolder = webStateHolder) }
             composable(Routes.SETTINGS) { SettingsScreen() }
         }
     }
