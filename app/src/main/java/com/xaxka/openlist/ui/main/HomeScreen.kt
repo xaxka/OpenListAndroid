@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -48,17 +49,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.IntOffset
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.theme.ShapeFABCircle
 import com.xaxka.openlist.ui.theme.ShapeMenuR4
+import kotlin.math.roundToInt
 
 /** FAB 旋转动画：200ms 线性、每次半圈（Blue Light §2.6 AnimFabRotate） */
 private const val FAB_ROTATE_ANIM_MS = 200
 private const val HALF_TURN = 0.5f
+
+/**
+ * 标题光学补偿（em）：拉丁字形墨迹中心（cap 顶 ~ 下延底的中点）比字体度量框中心
+ * 低约 0.108em（Roboto：度量框中心在基线上 0.3415em，墨迹中心在基线上 0.2335em）。
+ * 负值 = 向上抬，使墨迹中心对齐栏中心（=右侧图标视觉中心）。
+ */
+private const val OPTICAL_LIFT_EM = -0.108f
 
 /**
  * 服务主页（照源 tmp/lib/pages/alist/alist.dart）：
@@ -179,24 +188,26 @@ private fun HomeTopBar(
             .height(Dimens.AppBarHeight),
         windowInsets = WindowInsets(0, 0, 0, 0),
         title = {
+            val style = MaterialTheme.typography.titleLarge
             Text(
                 "OpenList - $coreVersion",
-                style = MaterialTheme.typography.titleLarge.copy(
-                    // 强制与右侧图标（视觉中心 = 栏中心 28dp）光学共线：
-                    // 1) lineHeight = fontSize(20sp)：行框收紧到字号本身，字形质量充满行框，
-                    //    不再依赖具体字体的 ascent/descent 度量（换 ROM 自定义字体也成立）
-                    // 2) includeFontPadding=false：关闭 Android 默认字体顶部填充
-                    //    （默认 true 时字形整体下压，官方文档明确 LineHeightStyle 以其为 false 为前提）
-                    // 3) lineHeightStyle Center + Mode.Fixed：字体度量在行框内居中（超出部分上下对称溢出）
-                    // 行框 20dp 被布局居中于 56dp 栏（y=18dp），字形光学中心即栏中心，与图标共线
-                    lineHeight = 20.sp,
+                style = style.copy(
+                    // 度量框确定化：行框=字号 + 关闭字体填充 + 墨迹度量居中，
+                    // 使基线稳定落在 (56dp 栏中心 + 6.83dp) 处，与 ROM 字体无关
+                    lineHeight = style.fontSize,
                     platformStyle = PlatformTextStyle(includeFontPadding = false),
                     lineHeightStyle = LineHeightStyle(
                         alignment = LineHeightStyle.Alignment.Center,
                         trim = LineHeightStyle.Trim.None,
                     ),
                 ),
-                // 窄屏/大字号下标题换行会占满整个栏高导致错位，单行 + 省略号兜底
+                modifier = Modifier.offset {
+                    // 光学补偿：度量框上下不对称（上为重音大写预留 ascent、下为深下延
+                    // 预留 descent），拉丁墨迹中心低 0.108em。按字号比例上抬该差值，
+                    // 墨迹中心 == 栏中心 28dp == 右侧图标视觉中心，严格共线。
+                    // offset 不参与测量，只影响摆放；sp→px 自动随字号缩放。
+                    IntOffset(0, (style.fontSize.toPx() * OPTICAL_LIFT_EM).roundToInt())
+                },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
