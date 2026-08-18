@@ -28,7 +28,7 @@ data class AppPrefs(
     val keepWakeLock: Boolean = false,
     val autostartOnBoot: Boolean = false,
     val autoOpenWeb: Boolean = false,
-    val noMemoryCache: Boolean = false,
+    val noMemoryCache: Boolean = true,
     val darkMode: Boolean = false,
     val dynamicColor: Boolean = false,
     val dataDir: String = "",
@@ -85,8 +85,8 @@ class AppPrefsRepository @Inject constructor(
     /** 服务运行时自动打开网页（网页设为首页） */
     val autoOpenWeb: Flow<Boolean> = data.map { it[Keys.AUTO_OPEN_WEB_PAGE] ?: false }
 
-    /** 不使用内存缓存（联动 config.json min_free_memory = -1） */
-    val noMemoryCache: Flow<Boolean> = data.map { it[Keys.NO_MEMORY_CACHE] ?: false }
+    /** 不使用内存缓存（联动 config.json min_free_memory = -1），默认开启 */
+    val noMemoryCache: Flow<Boolean> = data.map { it[Keys.NO_MEMORY_CACHE] ?: true }
 
     /** 深色模式（false = 跟随系统亮色表现） */
     val darkMode: Flow<Boolean> = data.map { it[Keys.DARK_MODE] ?: false }
@@ -123,7 +123,7 @@ class AppPrefsRepository @Inject constructor(
             keepWakeLock = prefs[Keys.KEEP_WAKE_LOCK] ?: false,
             autostartOnBoot = prefs[Keys.START_AT_BOOT] ?: false,
             autoOpenWeb = prefs[Keys.AUTO_OPEN_WEB_PAGE] ?: false,
-            noMemoryCache = prefs[Keys.NO_MEMORY_CACHE] ?: false,
+            noMemoryCache = prefs[Keys.NO_MEMORY_CACHE] ?: true,
             darkMode = prefs[Keys.DARK_MODE] ?: false,
             dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
             dataDir = (prefs[Keys.DATA_DIR] ?: defaultDataDir).ifBlank { defaultDataDir },

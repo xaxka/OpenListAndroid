@@ -10,10 +10,12 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.MoreVert
@@ -142,7 +144,9 @@ fun HomeScreen(
 
 /**
  * 顶栏：Blue Light 列表页模式——surface 冷白底与页面融为一体、TitleLarge 标题。
- * 高度 56dp 工具型紧凑顶栏；actions 顺序：password（admin 密码）→ more_vert（更多菜单）。
+ * 状态栏 inset 由外层 statusBarsPadding 承担（TopAppBar 自身 windowInsets 置零），
+ * 保证 56dp 全部用于标题行，不被状态栏挤压。
+ * actions 顺序：password（admin 密码）→ more_vert（更多菜单）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -152,7 +156,10 @@ private fun HomeTopBar(
     onAbout: () -> Unit,
 ) {
     TopAppBar(
-        modifier = Modifier.height(Dimens.AppBarHeight),
+        modifier = Modifier
+            .statusBarsPadding()
+            .height(Dimens.AppBarHeight),
+        windowInsets = WindowInsets(0, 0, 0, 0),
         title = {
             Text(
                 "OpenList - $coreVersion",

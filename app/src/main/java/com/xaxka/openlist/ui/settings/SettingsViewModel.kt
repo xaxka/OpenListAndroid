@@ -52,7 +52,7 @@ class SettingsViewModel @Inject constructor(
         val autostartOnBoot: Boolean = false,
         val autoOpenWeb: Boolean = false,
         val dataDir: String = "",
-        val noMemoryCache: Boolean = false,
+        val noMemoryCache: Boolean = true,
         // 视频洗码
         val videoHashDirs: List<String> = emptyList(),
         val videoHashSuffix: String = "",
