@@ -160,7 +160,9 @@ internal fun SettingsSwitchPreference(
                     .height(Dimens.SwitchTrackHeight),
                 colors = SwitchDefaults.colors(
                     checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                    // 打开态滑块用纯白而非 onPrimary（深藏青 #001D36）：浅蓝轨道
+                    // (#91C6FF) 上深色滑块观感近乎黑点，白滑块与 M3 常规观感一致
+                    checkedThumbColor = Color.White,
                     uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
                     uncheckedBorderColor = MaterialTheme.colorScheme.outline,
                     uncheckedThumbColor = MaterialTheme.colorScheme.outlineVariant,
