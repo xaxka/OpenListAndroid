@@ -35,8 +35,8 @@ object SafHelper {
             val volumeId = docId.substring(0, separator)
             val relativePath = docId.substring(separator + 1)
 
-            val volumeRoot = if (volumeId == "primary") {
-                Environment.getExternalStorageDirectory().absolutePath
+            val volumeRoot: File = if (volumeId == "primary") {
+                Environment.getExternalStorageDirectory()
             } else {
                 // 外置/OTG 卷：docId 卷名即 /storage 下挂载点目录名
                 File("/storage", volumeId)
