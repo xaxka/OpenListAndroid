@@ -3,7 +3,6 @@ package com.xaxka.openlist.easytier
 import com.easytier.jni.EasyTierJNI
 import com.xaxka.openlist.data.log.LogBuffer
 import com.xaxka.openlist.data.log.LoggableLevel
-import com.xaxka.openlist.data.log.ServerLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,6 +27,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.longOrNull
+import com.xaxka.openlist.data.log.ServerLog
 
 /**
  * EasyTier 内网映射引擎（no-tun，无 Android VPN 服务）。
@@ -35,8 +35,10 @@ import kotlinx.serialization.json.longOrNull
  * 生命周期由 [com.xaxka.openlist.service.ServerManager] 驱动：
  * OpenList 服务 RUNNING 时按偏好 [startIfEnabled]，STOPPING/STOPPED 时 [stop]。
  *
- * 数据面：EasyTier 核心以原生线程驻留进程内，通过 JNI 调用；
- * 状态轮询 collectNetworkInfos（NetworkInstanceRunningInfoMap proto3 JSON）。
+ * 端口转发为「动态绑定」：启动配置不带 [[port_forward]]（ipv4=DHCP，启动瞬间虚拟 IP
+ * 尚未分配）；轮询 collectNetworkInfos 拿到 DHCP 分配的虚拟 IP 后，经
+ * ConfigRpc.PatchConfig 追加 <虚拟IP>:5244 -> 127.0.0.1:5244(tcp) 转发规则；
+ * IP 变化时替换旧绑定。
  */
 @Singleton
 class EasyTierManager @Inject constructor(
@@ -51,24 +53,43 @@ class EasyTierManager @Inject constructor(
 
     enum class Phase { STOPPED, STARTING, RUNNING, STOPPING, ERROR, UNAVAILABLE }
 
-    /** UI 快照：phase + 已分得的虚拟 IPv4（可空）+ 说明文本（错误信息/等待原因等）。 */
+    /** UI 快照：phase + 已分得的虚拟 IPv4（可空）+ 端口是否已映射 + 说明文本。 */
     data class Status(
         val phase: Phase = Phase.STOPPED,
         val virtualIpv4: String? = null,
+        val portMapped: Boolean = false,
         val detail: String = "",
     ) {
         val summary: String
             get() = when (phase) {
                 Phase.STOPPED -> "未启动".appendDetail(detail)
                 Phase.STARTING -> "启动中".appendDetail(detail)
-                Phase.RUNNING -> if (virtualIpv4 != null) "运行中 · $virtualIpv4" else "运行中 · 等待分配虚拟 IP"
+                Phase.RUNNING -> runningSummary()
                 Phase.STOPPING -> "停止中"
                 Phase.ERROR -> "错误".appendDetail(detail)
                 Phase.UNAVAILABLE -> "不可用".appendDetail(detail)
             }
 
+        private fun runningSummary(): String {
+            val head = if (virtualIpv4 != null) "运行中 · $virtualIpv4" else "运行中 · 等待分配虚拟 IP"
+            val tail = when {
+                portMapped -> "端口 ${EasyTierSpec.PORT} 已映射"
+                virtualIpv4 != null -> "端口映射添加中"
+                else -> "映射待 DHCP 分配 IP 后自动添加"
+            }
+            return "$head · $tail"
+        }
+
         private fun String.appendDetail(d: String) = if (d.isEmpty()) this else "$this：$d"
     }
+
+    /** collectNetworkInfos 中本实例的运行信息。 */
+    internal data class InstanceInfo(
+        val running: Boolean,
+        val ipv4: String?,
+        val ipv4Addr: Long?,
+        val errorMsg: String,
+    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Mutex()
@@ -83,6 +104,10 @@ class EasyTierManager @Inject constructor(
 
     @Volatile
     private var instanceStarted = false
+
+    /** 当前已下发转发规则的绑定地址（uint32 大端），null 表示尚未下发。 */
+    @Volatile
+    private var forwardedAddr: Long? = null
 
     @Volatile
     private var monitorJob: Job? = null
@@ -122,7 +147,7 @@ class EasyTierManager @Inject constructor(
             log(
                 LoggableLevel.INFO,
                 "启动内网映射：network=$effectiveNetwork, peer=${if (peerUri.isBlank()) "（未配置）" else peerUri}, " +
-                    "port_forward=${EasyTierSpec.PORT_FORWARD_BIND} -> ${EasyTierSpec.PORT_FORWARD_DST}",
+                    "端口 ${EasyTierSpec.PORT} 将在 DHCP 分配虚拟 IP 后动态映射",
             )
 
             transition(Status(Phase.STARTING))
@@ -144,6 +169,7 @@ class EasyTierManager @Inject constructor(
             }
 
             instanceStarted = true
+            forwardedAddr = null
             transition(Status(Phase.RUNNING, detail = "正在连接网络"))
             log(LoggableLevel.INFO, "EasyTier 实例已启动（${EasyTierSpec.INSTANCE_NAME}，no-tun）")
             startMonitor()
@@ -167,6 +193,7 @@ class EasyTierManager @Inject constructor(
                 }
             }
             instanceStarted = false
+            forwardedAddr = null
             transition(Status(Phase.STOPPED))
             log(LoggableLevel.INFO, "EasyTier 实例已停止")
         }
@@ -188,7 +215,7 @@ class EasyTierManager @Inject constructor(
         monitorJob = null
     }
 
-    /** collectNetworkInfos → 解析 running / error_msg / 虚拟 IPv4，刷新状态。 */
+    /** collectNetworkInfos → 刷新状态；拿到 DHCP 虚拟 IP 后确保端口转发规则已下发。 */
     private fun pollStatus() {
         val jsonText = runCatching { EasyTierJNI.collectNetworkInfos(COLLECT_MAX) }.getOrElse { e ->
             log(LoggableLevel.WARN, "collectNetworkInfos 调用失败：${e.message}")
@@ -196,7 +223,7 @@ class EasyTierManager @Inject constructor(
         }
         if (jsonText.isNullOrBlank()) return
 
-        val info = runCatching { parseInstanceInfo(jsonText) }.getOrNull() ?: return
+        val info = runCatching { parseInstanceInfo(jsonText) }.getOrElse { null }
         if (info == null) {
             // map 中没有本实例：可能已被核心侧清理；保持 RUNNING 等待自愈，仅降级提示
             if (_state.value.phase == Phase.RUNNING) {
@@ -205,26 +232,56 @@ class EasyTierManager @Inject constructor(
             return
         }
 
-        val (running, ipv4, errorMsg) = info
-        if (!running) {
-            val msg = errorMsg.ifBlank { "实例未运行" }
+        if (!info.running) {
+            val msg = info.errorMsg.ifBlank { "实例未运行" }
             if (_state.value.phase != Phase.ERROR || _state.value.detail != msg) {
                 transition(Status(Phase.ERROR, detail = msg))
                 log(LoggableLevel.ERROR, "EasyTier 实例异常：$msg")
             }
             return
         }
-        val next = Status(Phase.RUNNING, virtualIpv4 = ipv4)
-        if (next != _state.value) {
-            if (ipv4 != null && ipv4 != _state.value.virtualIpv4) {
-                log(LoggableLevel.INFO, "EasyTier 虚拟 IP：$ipv4（端口 ${EasyTierSpec.PORT_FORWARD_BIND} 已映射）")
-            }
-            transition(next)
+
+        // DHCP 虚拟 IP 已分配：确保转发规则与当前 IP 一致（首次 ADD，变更则 REMOVE+ADD）
+        val addr = info.ipv4Addr
+        if (addr != null && forwardedAddr != addr) {
+            if (!applyPortForward(forwardedAddr, addr, info.ipv4)) return
         }
+
+        val next = Status(
+            Phase.RUNNING,
+            virtualIpv4 = info.ipv4,
+            portMapped = forwardedAddr != null && forwardedAddr == addr,
+        )
+        if (next != _state.value) transition(next)
     }
 
-    /** 提取实例运行信息：Triple(running, ipv4?, errorMsg)。未找到实例返回 null。 */
-    internal fun parseInstanceInfo(jsonText: String): Triple<Boolean, String?, String>? {
+    /** 通过 ConfigRpc.PatchConfig 下发端口转发规则；成功返回 true，失败保持现状等待下轮重试。 */
+    private fun applyPortForward(removeAddr: Long?, addAddr: Long, ipv4: String?): Boolean {
+        val payload = EasyTierSpec.buildPortForwardPatchJson(removeAddr, addAddr)
+        val error = runCatching {
+            EasyTierJNI.callJsonRpc(
+                EasyTierSpec.CONFIG_RPC_SERVICE,
+                EasyTierSpec.PATCH_CONFIG_METHOD,
+                payload,
+            )
+            null
+        }.getOrElse { e -> e.message ?: lastError("端口转发下发失败") }
+
+        val ipLabel = ipv4 ?: EasyTierSpec.formatIpv4(addAddr)
+        if (error != null) {
+            log(LoggableLevel.WARN, "端口转发下发失败（稍后重试）：$error")
+            return false
+        }
+        forwardedAddr = addAddr
+        log(
+            LoggableLevel.INFO,
+            "端口转发已生效：$ipLabel:${EasyTierSpec.PORT} -> 127.0.0.1:${EasyTierSpec.PORT} (tcp)",
+        )
+        return true
+    }
+
+    /** 提取实例运行信息；map 中未找到本实例返回 null。 */
+    internal fun parseInstanceInfo(jsonText: String): InstanceInfo? {
         val root = json.parseToJsonElement(jsonText) as? JsonObject ?: return null
         val map = objOrCamel(root, "map") ?: return null
         val entry = objOrCamel(map, EasyTierSpec.INSTANCE_NAME) ?: return null
@@ -233,13 +290,17 @@ class EasyTierManager @Inject constructor(
         val errorMsg = (entry["error_msg"] as? JsonPrimitive)?.content.orEmpty()
 
         var ipv4: String? = null
+        var addr: Long? = null
         val nodeInfo = objOrCamel(entry, "my_node_info")
         val v4 = nodeInfo?.let { objOrCamel(it, "virtual_ipv4") }
         if (v4 != null) {
-            val addr = objOrCamel(v4, "address")?.let { (it["addr"] as? JsonPrimitive)?.longOrNull }
-            if (addr != null) ipv4 = formatIpv4(addr)
+            val raw = objOrCamel(v4, "address")?.let { (it["addr"] as? JsonPrimitive)?.longOrNull }
+            if (raw != null) {
+                addr = raw
+                ipv4 = EasyTierSpec.formatIpv4(raw)
+            }
         }
-        return Triple(running, ipv4, errorMsg)
+        return InstanceInfo(running, ipv4, addr, errorMsg)
     }
 
     /** pbjson 配置了 preserve_proto_field_names，这里仍做 camelCase 兜底。 */
@@ -248,15 +309,6 @@ class EasyTierManager @Inject constructor(
             if (i == 0) part else part.replaceFirstChar { it.uppercase() }
         }.joinToString("")
         return (obj[snakeKey] ?: obj[camel]) as? JsonObject
-    }
-
-    /** Ipv4Addr.addr（uint32 大端）→ 点分十进制。 */
-    internal fun formatIpv4(addr: Long): String {
-        val a = (addr shr 24) and 0xFF
-        val b = (addr shr 16) and 0xFF
-        val c = (addr shr 8) and 0xFF
-        val d = addr and 0xFF
-        return "$a.$b.$c.$d"
     }
 
     private fun transition(status: Status) {

@@ -1,12 +1,24 @@
 package com.xaxka.openlist.easytier
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** EasyTier TOML 模板单测：固定字段 / 可配置字段 / 空值回退 / 转义。 */
+/**
+ * EasyTier 模板与 RPC 载荷单测：
+ * TOML（固定字段/可配置字段/空值回退/转义、启动配置不带端口转发）
+ * PatchConfig 载荷（ADD/REMOVE、实例选择器、SocketAddr 编码）
+ */
 class EasyTierSpecTest {
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     @Test
     fun `固定字段按需求模板生成`() {
@@ -16,10 +28,13 @@ class EasyTierSpecTest {
         assertTrue(toml.contains("dhcp = true"))
         assertTrue(toml.contains("[flags]"))
         assertTrue(toml.contains("no_tun = true"))
-        assertTrue(toml.contains("[[port_forward]]"))
-        assertTrue(toml.contains("""bind_addr = "10.144.144.2:5244""""))
-        assertTrue(toml.contains("""dst_addr = "127.0.0.1:5244""""))
-        assertTrue(toml.contains("""proto = "tcp""""))
+    }
+
+    @Test
+    fun `启动配置不含端口转发段`() {
+        // 端口转发在 DHCP 分配虚拟 IP 后经 ConfigRpc.PatchConfig 动态追加
+        val toml = EasyTierSpec.buildToml("my-net", "secret", "")
+        assertFalse(toml.contains("[[port_forward]]"))
     }
 
     @Test
@@ -66,5 +81,63 @@ class EasyTierSpecTest {
     @Test
     fun `中文与常规字符保持原样`() {
         assertEquals("\"内网-1\"", EasyTierSpec.tomlString("内网-1"))
+    }
+
+    @Test
+    fun `uint32大端转点分十进制`() {
+        assertEquals("127.0.0.1", EasyTierSpec.formatIpv4(0x7F000001L))
+        assertEquals("10.144.144.2", EasyTierSpec.formatIpv4(0x0A909002L))
+    }
+
+    @Test
+    fun `端口转发补丁载荷包含ADD规则与实例选择器`() {
+        val payload = json.parseToJsonElement(
+            EasyTierSpec.buildPortForwardPatchJson(removeAddr = null, addAddr = 0x0A909002L)
+        ).jsonObject
+
+        // 实例选择器按名称定位
+        assertEquals(
+            EasyTierSpec.INSTANCE_NAME,
+            payload["instance"]!!.jsonObject["instance_selector"]!!.jsonObject["name"]!!.jsonPrimitive.content
+        )
+
+        val forwards = payload["patch"]!!.jsonObject["port_forwards"]!!.jsonArray
+        assertEquals(1, forwards.size)
+        val entry = forwards[0].jsonObject
+        assertEquals("ADD", entry["action"]!!.jsonPrimitive.content)
+
+        val cfg = entry["cfg"]!!.jsonObject
+        val bind = cfg["bind_addr"]!!.jsonObject
+        assertEquals(0x0A909002L, bind["ipv4"]!!.jsonObject["addr"]!!.jsonPrimitive.long)
+        assertEquals(5244, bind["port"]!!.jsonPrimitive.long)
+
+        val dst = cfg["dst_addr"]!!.jsonObject
+        assertEquals(EasyTierSpec.LOOPBACK_ADDR, dst["ipv4"]!!.jsonObject["addr"]!!.jsonPrimitive.long)
+        assertEquals(5244, dst["port"]!!.jsonPrimitive.long)
+        assertEquals("TCP", cfg["socket_type"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `IP变化时补丁先REMOVE旧绑定再ADD新绑定`() {
+        val payload = json.parseToJsonElement(
+            EasyTierSpec.buildPortForwardPatchJson(removeAddr = 0x0A909009L, addAddr = 0x0A909002L)
+        ).jsonObject
+
+        val forwards = payload["patch"]!!.jsonObject["port_forwards"]!!.jsonArray
+        assertEquals(2, forwards.size)
+
+        val remove = forwards[0].jsonObject
+        assertEquals("REMOVE", remove["action"]!!.jsonPrimitive.content)
+        assertEquals(
+            0x0A909009L,
+            remove["cfg"]!!.jsonObject["bind_addr"]!!.jsonObject["ipv4"]!!.jsonObject["addr"]!!.jsonPrimitive.long
+        )
+
+        val add = forwards[1].jsonObject
+        assertEquals("ADD", add["action"]!!.jsonPrimitive.content)
+        assertEquals(
+            0x0A909002L,
+            add["cfg"]!!.jsonObject["bind_addr"]!!.jsonObject["ipv4"]!!.jsonObject["addr"]!!.jsonPrimitive.long
+        )
     }
 }
