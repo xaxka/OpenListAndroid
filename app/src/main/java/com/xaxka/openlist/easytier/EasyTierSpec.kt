@@ -21,7 +21,7 @@ import kotlinx.serialization.json.putJsonObject
  * - 顶层 instance_name / hostname / dhcp
  * - [network_identity] network_name / network_secret
  * - [[peer]] uri（多条可重复，本模板仅暴露一条）
- * - [flags] no_tun（位于 FlagsInConfig，非顶层字段）
+ * - [flags] no_tun / enable_quic_proxy（均位于 FlagsInConfig，非顶层字段）
  */
 object EasyTierSpec {
 
@@ -49,6 +49,13 @@ object EasyTierSpec {
     const val CONFIG_RPC_SERVICE = "api.config.ConfigRpcService"
     const val PATCH_CONFIG_METHOD = "PatchConfig"
 
+    /** ListPortForward RPC 坐标：读取实例当前实际生效的端口转发规则（对账用）。 */
+    const val PORT_FORWARD_RPC_SERVICE = "api.instance.PortForwardManageRpcService"
+    const val LIST_PORT_FORWARD_METHOD = "ListPortForward"
+
+    /** 密钥脱敏占位（启动配置展示用）。 */
+    private const val SECRET_MASKED = "********"
+
     /**
      * 解析端口列表文本：支持中英文逗号 / 分号 / 空白 / 换行分隔；
      * 自动过滤非数字、越界（1..65535）值，去重并升序排列。
@@ -69,8 +76,14 @@ object EasyTierSpec {
      * @param networkName 网络名称（空白回退 "default"）
      * @param networkSecret 网络密钥（允许空字符串）
      * @param peerUri 对等节点 URI；空白则不生成 [[peer]]（单机直连场景也合法）
+     * @param enableQuicProxy 是否启用 QUIC 代理（[flags] enable_quic_proxy，把 TCP 流转为 QUIC）
      */
-    fun buildToml(networkName: String, networkSecret: String, peerUri: String): String {
+    fun buildToml(
+        networkName: String,
+        networkSecret: String,
+        peerUri: String,
+        enableQuicProxy: Boolean = false,
+    ): String {
         val effectiveNetwork = networkName.ifBlank { DEFAULT_NETWORK_NAME }
         val sb = StringBuilder()
         sb.append("instance_name = ").append(tomlString(INSTANCE_NAME)).append('\n')
@@ -82,7 +95,12 @@ object EasyTierSpec {
         sb.append("network_secret = ").append(tomlString(networkSecret)).append("\n\n")
 
         sb.append("[flags]\n")
-        sb.append("no_tun = ").append(NO_TUN).append("\n\n")
+        sb.append("no_tun = ").append(NO_TUN).append('\n')
+        if (enableQuicProxy) {
+            // 对照 FlagsInConfig.enable_quic_proxy（字段 24）：把 TCP 流转为 QUIC 流
+            sb.append("enable_quic_proxy = true").append('\n')
+        }
+        sb.append('\n')
 
         val peer = peerUri.trim()
         if (peer.isNotEmpty()) {
@@ -90,6 +108,20 @@ object EasyTierSpec {
             sb.append("uri = ").append(tomlString(peer)).append("\n\n")
         }
         return sb.toString()
+    }
+
+    /**
+     * 启动配置的脱敏展示版本：网络密钥以占位符呈现，其余与 [buildToml] 一致。
+     * 供设置页「启动配置」只读展示，避免密钥落屏/截图。
+     */
+    fun buildDisplayToml(
+        networkName: String,
+        networkSecret: String,
+        peerUri: String,
+        enableQuicProxy: Boolean,
+    ): String {
+        val maskedSecret = if (networkSecret.isBlank()) networkSecret else SECRET_MASKED
+        return buildToml(networkName, maskedSecret, peerUri, enableQuicProxy)
     }
 
     /**
@@ -141,6 +173,19 @@ object EasyTierSpec {
                 put("socket_type", "TCP")
             }
         }
+
+    /**
+     * 仅含实例选择器的最小载荷，供 ListPortForward 这类只读 RPC 使用：
+     * `{"instance":{"instance_selector":{"name":"openlist"}}}`。
+     */
+    fun buildInstanceSelectorJson(): String =
+        buildJsonObject {
+            putJsonObject("instance") {
+                putJsonObject("instance_selector") {
+                    put("name", INSTANCE_NAME)
+                }
+            }
+        }.toString()
 
     /** Ipv4Addr.addr（uint32 大端）→ 点分十进制。 */
     fun formatIpv4(addr: Long): String {

@@ -1,19 +1,30 @@
 package com.xaxka.openlist.ui.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Numbers
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
@@ -35,20 +46,34 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.xaxka.openlist.easytier.EasyTierManager
+import com.xaxka.openlist.easytier.PeerDetail
+import com.xaxka.openlist.easytier.RouteDetail
+import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.theme.InputHint
 import com.xaxka.openlist.ui.theme.InputLabel
 import com.xaxka.openlist.ui.theme.ShapeInputOutlineR4
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** 事件日志在设置页的最大展示条数（更早的省略，避免页面过长）。 */
+private const val EVENTS_DISPLAY_LIMIT = 30
+
+/** 网络节点在设置页的最大展示条数。 */
+private const val NODES_DISPLAY_LIMIT = 20
+
 /**
  * 设置子页面：内网映射（EasyTier，no-tun 不使用 VPN）。
  * 内容自设置主页面拆分而来；返回键由顶栏按钮与系统回退共同支持（NavHost 栈）。
+ *
+ * 下半部分为只读「运行状态」区：网络状态、本节点信息、网络节点、事件日志、启动配置。
  */
 @Composable
 fun EasyTierSettingsScreen(
@@ -62,6 +87,7 @@ fun EasyTierSettingsScreen(
     var showSecretDialog by remember { mutableStateOf(false) }
     var showPeerDialog by remember { mutableStateOf(false) }
     var showPortsDialog by remember { mutableStateOf(false) }
+    var showTomlDialog by remember { mutableStateOf(false) }
 
     // Snackbar 事件：与设置主页面相同的 GetSnackBar 复刻
     LaunchedEffect(viewModel) {
@@ -95,6 +121,7 @@ fun EasyTierSettingsScreen(
                 Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
+                    .padding(bottom = 24.dp)
             ) {
                 SettingsSwitchPreference(
                     title = "启用内网映射",
@@ -127,10 +154,35 @@ fun EasyTierSettingsScreen(
                     leading = { SettingsPreferenceIcon(Icons.Outlined.Numbers) },
                     onTap = { showPortsDialog = true }
                 )
+                SettingsSwitchPreference(
+                    title = "启用 QUIC 代理",
+                    subtitle = "enable_quic_proxy：把 TCP 流转为 QUIC 传输，弱网/中继场景更稳；变更需重启实例",
+                    icon = Icons.Outlined.Speed,
+                    value = state.easytierQuicProxy,
+                    onCheckedChange = viewModel::setEasytierQuicProxy
+                )
+
+                SettingsDividerPreference("运行状态")
+
                 SettingsBasicPreference(
                     title = "映射状态",
                     subtitle = state.easytierStatus,
                     leading = { SettingsPreferenceIcon(Icons.Outlined.Info) }
+                )
+
+                EasyTierStatusSection(detail = state.easytierDetail)
+
+                SettingsBasicPreference(
+                    title = "启动配置",
+                    subtitle = if (state.easytierDetail.startupToml.isBlank()) {
+                        "（未启动，暂无配置）"
+                    } else {
+                        "查看本实例的启动 TOML（密钥已脱敏）"
+                    },
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.Description) },
+                    onTap = if (state.easytierDetail.startupToml.isNotBlank()) {
+                        { showTomlDialog = true }
+                    } else null
                 )
             }
         }
@@ -190,6 +242,209 @@ fun EasyTierSettingsScreen(
             }
         )
     }
+    if (showTomlDialog) {
+        SettingsAlertDialog(
+            onDismissRequest = { showTomlDialog = false },
+            title = "启动配置",
+            content = {
+                SelectionContainer {
+                    Text(
+                        state.easytierDetail.startupToml,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+            },
+            actions = {
+                SettingsDialogTextButton(text = TEXT_CLOSE, onClick = { showTomlDialog = false })
+            }
+        )
+    }
+}
+
+/**
+ * 只读运行状态区：本节点信息 + 网络节点（路由/对等合并）+ 事件日志。
+ * 数据均来自 collectNetworkInfos 的最近一次解析快照，随轮询自动刷新。
+ */
+@Composable
+private fun EasyTierStatusSection(detail: EasyTierManager.Status) {
+    val phase = detail.phase
+    if (phase == EasyTierManager.Phase.STOPPED || phase == EasyTierManager.Phase.UNAVAILABLE) {
+        return
+    }
+
+    // ---- 本节点 ----
+    detail.myNode?.let { node ->
+        StatusCard("本节点") {
+            StatusKV("主机名", node.hostname)
+            StatusKV("虚拟 IP", node.virtualIpv4.orEmpty())
+            StatusKV("Peer ID", if (node.peerId != 0L) node.peerId.toString() else "")
+            StatusKV("版本", node.version)
+            if (node.listeners.isNotEmpty()) {
+                StatusKV("监听", node.listeners.joinToString("\n"))
+            }
+            node.stun?.let { stun ->
+                if (stun.udpNatType.isNotBlank()) StatusKV("UDP NAT", stun.udpNatType)
+                if (stun.tcpNatType.isNotBlank()) StatusKV("TCP NAT", stun.tcpNatType)
+                if (stun.publicIps.isNotEmpty()) StatusKV("公网 IP", stun.publicIps.joinToString(", "))
+            }
+        }
+    }
+
+    // ---- 网络节点（路由表为主，对等连接明细并入） ----
+    val peersByPeerId = detail.peers.associateBy(PeerDetail::peerId)
+    if (detail.routes.isNotEmpty()) {
+        StatusCard("网络节点（${detail.routes.size}）") {
+            detail.routes.take(NODES_DISPLAY_LIMIT).forEach { route ->
+                RouteNodeBlock(route, peersByPeerId[route.peerId])
+            }
+            if (detail.routes.size > NODES_DISPLAY_LIMIT) {
+                Text(
+                    "…仅显示前 $NODES_DISPLAY_LIMIT 个",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    } else if (detail.peers.isNotEmpty()) {
+        // 尚未形成路由表（如刚连接）：仅按对等连接展示
+        StatusCard("网络节点（${detail.peers.size}）") {
+            detail.peers.take(NODES_DISPLAY_LIMIT).forEach { peer ->
+                PeerOnlyBlock(peer)
+            }
+        }
+    }
+
+    // ---- 事件日志 ----
+    if (detail.events.isNotEmpty()) {
+        val shown = detail.events.takeLast(EVENTS_DISPLAY_LIMIT)
+        StatusCard("事件日志（${detail.events.size}）") {
+            SelectionContainer {
+                Column {
+                    shown.forEach { event ->
+                        Text(
+                            event,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(vertical = 1.dp)
+                        )
+                    }
+                }
+            }
+            if (detail.events.size > EVENTS_DISPLAY_LIMIT) {
+                Text(
+                    "仅显示最近 $EVENTS_DISPLAY_LIMIT 条",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+/** 路由表中的一个节点 + 对应的连接明细（若有）。 */
+@Composable
+private fun RouteNodeBlock(route: RouteDetail, peer: PeerDetail?) {
+    Column(Modifier.padding(vertical = 6.dp)) {
+        val title = buildString {
+            append(if (route.hostname.isNotBlank()) route.hostname else "Peer ${route.peerId}")
+            route.ipv4?.let { append(" · ").append(it) }
+        }
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+        val sub = buildString {
+            append("peer ${route.peerId}")
+            if (route.nextHopPeerId != 0L && route.nextHopPeerId != route.peerId) {
+                append(" · 下一跳 ${route.nextHopPeerId}")
+            }
+            append(" · cost ${route.cost}")
+            if (route.pathLatencyMs != 0) append(" · 延迟 ${route.pathLatencyMs}ms")
+            if (route.version.isNotBlank()) append(" · v${route.version}")
+        }
+        Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        peer?.conns?.forEach { conn ->
+            val connText = buildString {
+                append("    ")
+                append(conn.tunnelType.ifBlank { "tunnel" })
+                conn.remoteAddr?.let { append(" → ").append(it) }
+                if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
+                if (conn.lossRate > 0f) append(" · 丢包 ${"%.1f".format(conn.lossRate * 100)}%")
+            }
+            Text(
+                connText,
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** 无路由条目时的纯对等连接展示。 */
+@Composable
+private fun PeerOnlyBlock(peer: PeerDetail) {
+    Column(Modifier.padding(vertical = 6.dp)) {
+        Text("Peer ${peer.peerId}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+        peer.conns.forEach { conn ->
+            val connText = buildString {
+                append("    ")
+                append(conn.tunnelType.ifBlank { "tunnel" })
+                conn.remoteAddr?.let { append(" → ").append(it) }
+                if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
+            }
+            Text(
+                connText,
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** 状态卡片：浅色底 + R8 圆角 + 标题（primary labelLarge）。 */
+@Composable
+private fun StatusCard(title: String, content: @Composable () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Dimens.PageMargin, vertical = 6.dp)
+            .background(
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                RoundedCornerShape(8.dp)
+            )
+            .padding(Dimens.CardPadding)
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.height(6.dp))
+        content()
+    }
+}
+
+/** 只读键值行；value 为空则不渲染。 */
+@Composable
+private fun StatusKV(label: String, value: String) {
+    if (value.isBlank()) return
+    Row(Modifier.padding(vertical = 1.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(72.dp)
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+    }
 }
 
 /** EasyTier 配置文本输入对话框（网络名称/密钥/对端 URI 复用；密钥默认掩码 + 眼睛切换可见）。 */
@@ -243,3 +498,5 @@ private fun EasyTierTextDialog(
         }
     )
 }
+
+private const val TEXT_CLOSE = "关闭"

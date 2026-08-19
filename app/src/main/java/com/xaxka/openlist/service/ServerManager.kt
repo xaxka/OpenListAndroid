@@ -218,6 +218,17 @@ class ServerManager @Inject constructor(
         core.onServiceDestroyed()
     }
 
+    /**
+     * App 回前台回调（ProcessLifecycleOwner ON_START，由 Application 转发）。
+     * OPPO 等厂商后台会冻结/清理进程：解冻回前台后 OpenList 内核通常仍在，
+     * 但 EasyTier 原生实例可能已丢失——这里以原生侧实际状态为准校验并按需恢复。
+     */
+    fun onAppForegrounded() {
+        if (state.value == ServerState.RUNNING) {
+            easyTier.ensureRecovered()
+        }
+    }
+
     /** 设置管理员密码；失败（内核未初始化/调用异常）返回 false。 */
     suspend fun setAdminPassword(password: String): Boolean =
         withContext(Dispatchers.IO) {

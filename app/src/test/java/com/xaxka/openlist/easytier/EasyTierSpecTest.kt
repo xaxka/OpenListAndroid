@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -176,5 +177,41 @@ class EasyTierSpecTest {
             0x0A909002L,
             add["cfg"]!!.jsonObject["bind_addr"]!!.jsonObject["ipv4"]!!.jsonObject["addr"]!!.jsonPrimitive.long
         )
+    }
+
+    @Test
+    fun `启用QUIC代理时flags写入enable_quic_proxy`() {
+        // 对照 FlagsInConfig.enable_quic_proxy（proto 字段 24，snake_case）
+        val on = EasyTierSpec.buildToml("net", "", "", enableQuicProxy = true)
+        assertTrue(on.contains("enable_quic_proxy = true"))
+        val off = EasyTierSpec.buildToml("net", "", "", enableQuicProxy = false)
+        assertFalse(off.contains("enable_quic_proxy"))
+    }
+
+    @Test
+    fun `QUIC代理参数缺省为关闭`() {
+        val toml = EasyTierSpec.buildToml("net", "", "")
+        assertFalse(toml.contains("enable_quic_proxy"))
+    }
+
+    @Test
+    fun `展示配置对密钥脱敏`() {
+        val display = EasyTierSpec.buildDisplayToml("net", "s3cret", "", enableQuicProxy = true)
+        assertFalse(display.contains("s3cret"))
+        assertTrue(display.contains("\"********\""))
+        // 空白密钥保持空白（显示为 network_secret = ""）
+        val displayBlank = EasyTierSpec.buildDisplayToml("net", "", "", enableQuicProxy = false)
+        assertTrue(displayBlank.contains("network_secret = \"\""))
+    }
+
+    @Test
+    fun `实例选择器最小载荷按名称定位`() {
+        val payload = json.parseToJsonElement(EasyTierSpec.buildInstanceSelectorJson()).jsonObject
+        assertEquals(
+            EasyTierSpec.INSTANCE_NAME,
+            payload["instance"]!!.jsonObject["instance_selector"]!!.jsonObject["name"]!!.jsonPrimitive.content
+        )
+        // 只读 RPC 载荷不应携带 patch 字段
+        assertNull(payload["patch"])
     }
 }

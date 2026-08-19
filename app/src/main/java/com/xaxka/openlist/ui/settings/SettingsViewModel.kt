@@ -75,7 +75,9 @@ class SettingsViewModel @Inject constructor(
         val easytierNetworkSecret: String = "",
         val easytierPeerUri: String = "",
         val easytierPorts: String = "5244",
-        val easytierStatus: String = ""
+        val easytierQuicProxy: Boolean = true,
+        val easytierStatus: String = "",
+        val easytierDetail: EasyTierManager.Status = EasyTierManager.Status()
     )
 
     /** 一次性 Snackbar 事件（文案/时长/动作照源 GetSnackBar 调用点） */
@@ -110,6 +112,7 @@ class SettingsViewModel @Inject constructor(
         prefs.easytierNetworkSecret,
         prefs.easytierPeerUri,
         prefs.easytierPorts,
+        prefs.easytierQuicProxy,
         easyTier.state
     ) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -132,7 +135,9 @@ class SettingsViewModel @Inject constructor(
             easytierNetworkSecret = values[15] as String,
             easytierPeerUri = values[16] as String,
             easytierPorts = values[17] as String,
-            easytierStatus = (values[18] as EasyTierManager.Status).summary
+            easytierQuicProxy = values[18] as Boolean,
+            easytierStatus = (values[19] as EasyTierManager.Status).summary,
+            easytierDetail = values[19] as EasyTierManager.Status
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -227,6 +232,21 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             prefs.setEasytierPorts(value)
             snack("端口列表已保存，映射将自动更新")
+        }
+    }
+
+    /** QUIC 代理（enable_quic_proxy）：写入启动 TOML，属启动期配置，需重启实例生效。 */
+    fun setEasytierQuicProxy(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setEasytierQuicProxy(value)
+            val running = serverManager.state.value == ServerState.RUNNING &&
+                prefs.easytierEnabled.first()
+            if (running) {
+                snack(if (value) "QUIC 代理已启用，正在重启内网映射…" else "QUIC 代理已停用，正在重启内网映射…")
+                easyTier.restart()
+            } else {
+                snack(if (value) "QUIC 代理已启用，重开内网映射开关或重启服务后生效" else "QUIC 代理已停用，重开内网映射开关或重启服务后生效")
+            }
         }
     }
 
