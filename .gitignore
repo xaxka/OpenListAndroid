@@ -18,3 +18,6 @@ local.properties
 # Gradle local cache
 .gradle/
 local.properties
+
+# EasyTier JNI 原生库（CI 现场编译产出，不入库；本地缺失时功能自动降级）
+app/src/main/jniLibs/

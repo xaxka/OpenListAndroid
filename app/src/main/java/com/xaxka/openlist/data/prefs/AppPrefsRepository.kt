@@ -37,6 +37,10 @@ data class AppPrefs(
     val videoHashDirs: List<String> = emptyList(),
     val videoHashRunning: Boolean = false,
     val videoHashStatus: String = "",
+    val easytierEnabled: Boolean = false,
+    val easytierNetwork: String = "",
+    val easytierNetworkSecret: String = "",
+    val easytierPeerUri: String = "",
 )
 
 /**
@@ -60,6 +64,10 @@ class AppPrefsRepository @Inject constructor(
         val VIDEO_HASH_DIRS = stringPreferencesKey("videoHashDirs")
         val VIDEO_HASH_RUNNING = booleanPreferencesKey("videoHashRunning")
         val VIDEO_HASH_STATUS = stringPreferencesKey("videoHashStatus")
+        val EASYTIER_ENABLED = booleanPreferencesKey("isEasyTierEnabled")
+        val EASYTIER_NETWORK = stringPreferencesKey("easyTierNetwork")
+        val EASYTIER_NETWORK_SECRET = stringPreferencesKey("easyTierNetworkSecret")
+        val EASYTIER_PEER_URI = stringPreferencesKey("easyTierPeerUri")
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -115,6 +123,18 @@ class AppPrefsRepository @Inject constructor(
     /** 最近一次洗码/还原结果文本 */
     val videoHashStatus: Flow<String> = data.map { it[Keys.VIDEO_HASH_STATUS] ?: "" }
 
+    /** EasyTier 内网映射总开关（默认关闭） */
+    val easytierEnabled: Flow<Boolean> = data.map { it[Keys.EASYTIER_ENABLED] ?: false }
+
+    /** EasyTier 网络名称（空白回退默认网络） */
+    val easytierNetwork: Flow<String> = data.map { it[Keys.EASYTIER_NETWORK] ?: "" }
+
+    /** EasyTier 网络密钥 */
+    val easytierNetworkSecret: Flow<String> = data.map { it[Keys.EASYTIER_NETWORK_SECRET] ?: "" }
+
+    /** EasyTier 对等节点 URI（空白则不配置 peer） */
+    val easytierPeerUri: Flow<String> = data.map { it[Keys.EASYTIER_PEER_URI] ?: "" }
+
     // ---------- 快照 ----------
 
     /** 一次性读取全部偏好 */
@@ -133,6 +153,10 @@ class AppPrefsRepository @Inject constructor(
             videoHashDirs = decodeDirs(prefs[Keys.VIDEO_HASH_DIRS] ?: ""),
             videoHashRunning = prefs[Keys.VIDEO_HASH_RUNNING] ?: false,
             videoHashStatus = prefs[Keys.VIDEO_HASH_STATUS] ?: "",
+            easytierEnabled = prefs[Keys.EASYTIER_ENABLED] ?: false,
+            easytierNetwork = prefs[Keys.EASYTIER_NETWORK] ?: "",
+            easytierNetworkSecret = prefs[Keys.EASYTIER_NETWORK_SECRET] ?: "",
+            easytierPeerUri = prefs[Keys.EASYTIER_PEER_URI] ?: "",
         )
     }
 
@@ -164,6 +188,14 @@ class AppPrefsRepository @Inject constructor(
     suspend fun setVideoHashRunning(value: Boolean) = edit { it[Keys.VIDEO_HASH_RUNNING] = value }
 
     suspend fun setVideoHashStatus(value: String) = edit { it[Keys.VIDEO_HASH_STATUS] = value }
+
+    suspend fun setEasytierEnabled(value: Boolean) = edit { it[Keys.EASYTIER_ENABLED] = value }
+
+    suspend fun setEasytierNetwork(value: String) = edit { it[Keys.EASYTIER_NETWORK] = value }
+
+    suspend fun setEasytierNetworkSecret(value: String) = edit { it[Keys.EASYTIER_NETWORK_SECRET] = value }
+
+    suspend fun setEasytierPeerUri(value: String) = edit { it[Keys.EASYTIER_PEER_URI] = value }
 
     // ---------- 内部 ----------
 

@@ -20,7 +20,11 @@ import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Lan
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.Palette
@@ -100,6 +104,9 @@ fun SettingsScreen(
 
     var showSuffixDialog by remember { mutableStateOf(false) }
     var showStatusDialog by remember { mutableStateOf(false) }
+    var showEasytierNetworkDialog by remember { mutableStateOf(false) }
+    var showEasytierSecretDialog by remember { mutableStateOf(false) }
+    var showEasytierPeerDialog by remember { mutableStateOf(false) }
 
     // 从系统设置/权限弹窗返回后刷新权限条目（源 AppLifecycleListener.onResume → updateData）
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -261,6 +268,39 @@ fun SettingsScreen(
                 onCheckedChange = viewModel::setNoMemoryCache
             )
 
+            // ---------- 内网映射（EasyTier，no-tun 不使用 VPN） ----------
+            SettingsDividerPreference("内网映射（EasyTier）")
+            SettingsSwitchPreference(
+                title = "启用内网映射",
+                subtitle = "随服务启停；no-tun 模式（不使用 VPN），把本机 5244 端口映射进 EasyTier 虚拟网络",
+                icon = Icons.Outlined.Lan,
+                value = state.easytierEnabled,
+                onCheckedChange = viewModel::setEasytierEnabled
+            )
+            SettingsBasicPreference(
+                title = "网络名称",
+                subtitle = state.easytierNetwork.ifBlank { "（留空使用默认网络 default）" },
+                leading = { SettingsPreferenceIcon(Icons.Outlined.Hub) },
+                onTap = { showEasytierNetworkDialog = true }
+            )
+            SettingsBasicPreference(
+                title = "网络密钥",
+                subtitle = if (state.easytierNetworkSecret.isNotBlank()) "已设置" else "（留空）",
+                leading = { SettingsPreferenceIcon(Icons.Outlined.Key) },
+                onTap = { showEasytierSecretDialog = true }
+            )
+            SettingsBasicPreference(
+                title = "对等节点",
+                subtitle = state.easytierPeerUri.ifBlank { "（留空不配置 peer）" },
+                leading = { SettingsPreferenceIcon(Icons.Outlined.Link) },
+                onTap = { showEasytierPeerDialog = true }
+            )
+            SettingsBasicPreference(
+                title = "映射状态",
+                subtitle = state.easytierStatus,
+                leading = { SettingsPreferenceIcon(Icons.Outlined.Info) }
+            )
+
             // ---------- 视频洗码（仅手动触发，无后台自动洗码） ----------
             SettingsDividerPreference(TEXT_VIDEO_HASH)
             SettingsBasicPreference(
@@ -360,6 +400,43 @@ fun SettingsScreen(
             onDismiss = { showStatusDialog = false }
         )
     }
+    if (showEasytierNetworkDialog) {
+        EasyTierTextDialog(
+            title = "网络名称",
+            initial = state.easytierNetwork,
+            placeholder = "留空使用默认网络 default",
+            onDismiss = { showEasytierNetworkDialog = false },
+            onConfirm = {
+                viewModel.setEasytierNetwork(it.trim())
+                showEasytierNetworkDialog = false
+            }
+        )
+    }
+    if (showEasytierSecretDialog) {
+        EasyTierTextDialog(
+            title = "网络密钥",
+            initial = state.easytierNetworkSecret,
+            placeholder = "与对端一致的网络密钥",
+            password = true,
+            onDismiss = { showEasytierSecretDialog = false },
+            onConfirm = {
+                viewModel.setEasytierNetworkSecret(it)
+                showEasytierSecretDialog = false
+            }
+        )
+    }
+    if (showEasytierPeerDialog) {
+        EasyTierTextDialog(
+            title = "对等节点 URI",
+            initial = state.easytierPeerUri,
+            placeholder = "如 tcp://host:11010 或公共服务器 URI",
+            onDismiss = { showEasytierPeerDialog = false },
+            onConfirm = {
+                viewModel.setEasytierPeerUri(it.trim())
+                showEasytierPeerDialog = false
+            }
+        )
+    }
 }
 
 /** SAF 选目录结果统一处理：持久化授权 + treeUri→路径；失败文案照源 MethodChannel error(code: message) */
@@ -435,6 +512,46 @@ private fun StatusDialog(
         },
         actions = {
             SettingsDialogTextButton(text = TEXT_CONFIRM, onClick = onDismiss)
+        }
+    )
+}
+
+/** EasyTier 配置文本输入对话框（网络名称/密钥/对端 URI 复用；密钥走密码掩码）。 */
+@Composable
+private fun EasyTierTextDialog(
+    title: String,
+    initial: String,
+    placeholder: String,
+    password: Boolean = false,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember { mutableStateOf(initial) }
+    SettingsAlertDialog(
+        onDismissRequest = onDismiss,
+        title = title,
+        content = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text(title, style = InputLabel) },
+                placeholder = { Text(placeholder, style = InputHint) },
+                singleLine = true,
+                shape = ShapeInputOutlineR4,
+                visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation()
+                else androidx.compose.ui.text.input.VisualTransformation.None,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        actions = {
+            SettingsDialogTextButton(text = TEXT_CANCEL, onClick = onDismiss)
+            SettingsDialogTextButton(text = TEXT_CONFIRM, onClick = { onConfirm(text) })
         }
     )
 }

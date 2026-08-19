@@ -8,6 +8,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
+import com.xaxka.openlist.easytier.EasyTierManager
+import com.xaxka.openlist.service.ServerManager
+import com.xaxka.openlist.service.ServerState
 import com.xaxka.openlist.video.VideoHashStore
 import com.xaxka.openlist.video.VideoHashWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -35,6 +38,8 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val prefs: AppPrefsRepository,
     private val videoHashStore: VideoHashStore,
+    private val easyTier: EasyTierManager,
+    private val serverManager: ServerManager,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -63,7 +68,13 @@ class SettingsViewModel @Inject constructor(
         // 界面
         val darkMode: Boolean = false,
         val dynamicColor: Boolean = false,
-        val silentJumpApp: Boolean = false
+        val silentJumpApp: Boolean = false,
+        // 内网映射（EasyTier）
+        val easytierEnabled: Boolean = false,
+        val easytierNetwork: String = "",
+        val easytierNetworkSecret: String = "",
+        val easytierPeerUri: String = "",
+        val easytierStatus: String = ""
     )
 
     /** 一次性 Snackbar 事件（文案/时长/动作照源 GetSnackBar 调用点） */
@@ -92,7 +103,12 @@ class SettingsViewModel @Inject constructor(
         prefs.videoHashStatus,
         prefs.darkMode,
         prefs.dynamicColor,
-        prefs.silentJumpApp
+        prefs.silentJumpApp,
+        prefs.easytierEnabled,
+        prefs.easytierNetwork,
+        prefs.easytierNetworkSecret,
+        prefs.easytierPeerUri,
+        easyTier.state
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         UiState(
@@ -108,7 +124,12 @@ class SettingsViewModel @Inject constructor(
             videoHashStatus = values[9] as String,
             darkMode = values[10] as Boolean,
             dynamicColor = values[11] as Boolean,
-            silentJumpApp = values[12] as Boolean
+            silentJumpApp = values[12] as Boolean,
+            easytierEnabled = values[13] as Boolean,
+            easytierNetwork = values[14] as String,
+            easytierNetworkSecret = values[15] as String,
+            easytierPeerUri = values[16] as String,
+            easytierStatus = (values[17] as EasyTierManager.Status).summary
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -175,6 +196,33 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             prefs.setDataDir(path)
             snack("数据目录已保存，重启 OpenList 服务后生效")
+        }
+    }
+
+    // ---------- 内网映射（EasyTier） ----------
+
+    /** 总开关：开启且服务正在运行时立即拉起实例，关闭立即停止；否则随下次服务启动生效。 */
+    fun setEasytierEnabled(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setEasytierEnabled(value)
+            if (serverManager.state.value == ServerState.RUNNING) {
+                if (value) easyTier.startIfEnabled() else easyTier.stop()
+            }
+            snack(if (value) "内网映射已启用" else "内网映射已停用")
+        }
+    }
+
+    /** 网络名称/密钥/对端 URI：保存后需重启服务（或重开总开关）生效。 */
+    fun setEasytierNetwork(value: String) = setEasytierText(prefs::setEasytierNetwork, value, "网络名称")
+
+    fun setEasytierNetworkSecret(value: String) = setEasytierText(prefs::setEasytierNetworkSecret, value, "网络密钥")
+
+    fun setEasytierPeerUri(value: String) = setEasytierText(prefs::setEasytierPeerUri, value, "对等节点")
+
+    private fun setEasytierText(setter: suspend (String) -> Unit, value: String, label: String) {
+        viewModelScope.launch {
+            setter(value)
+            snack("$label已保存，重开内网映射开关或重启服务后生效")
         }
     }
 
