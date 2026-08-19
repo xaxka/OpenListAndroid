@@ -12,9 +12,109 @@ on:
   workflow_dispatch:
 
 jobs:
+  # EasyTier JNI 原生库（内网映射，no-tun 不使用 VPN）：
+  # 在固定 commit 的 EasyTier 仓库内用 cargo-ndk 分 ABI 交叉编译 libeasytier_android_jni.so。
+  # 成品按内容寻址缓存：同一 EasyTier commit + ABI 直接复用，跳过整条 Rust 工具链与编译。
+  easytier-jni:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ABI: arm64-v8a
+            TARGET: aarch64-linux-android
+          - ABI: armeabi-v7a
+            TARGET: armv7-linux-androideabi
+          - ABI: x86_64
+            TARGET: x86_64-linux-android
+    env:
+      EASYTIER_REPO: https://github.com/EasyTier/EasyTier.git
+      # 固定 EasyTier commit（main：新版 JNI 绑定，含 no-tun / port_forward / DHCP 支持）
+      EASYTIER_REF: 57eb6908f4fc160f26946a14c672393a52df1101
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: OpenListAndroid
+
+      - name: Cache EasyTier JNI output
+        id: jni-cache
+        uses: actions/cache@v4
+        with:
+          path: jni-out/${{ matrix.ABI }}
+          key: easytier-jni-${{ matrix.ABI }}-${{ env.EASYTIER_REF }}-v1
+
+      # 缓存未命中才克隆 EasyTier（--depth 1 定向 commit，避免大仓库全量历史）
+      - name: Checkout EasyTier (pinned)
+        if: steps.jni-cache.outputs.cache-hit != 'true'
+        run: |
+          git init -q EasyTier
+          git -C EasyTier remote add origin "$EASYTIER_REPO"
+          git -C EasyTier fetch -q --depth 1 origin "$EASYTIER_REF"
+          git -C EasyTier checkout -q FETCH_HEAD
+          git -C EasyTier log -1 --oneline
+
+      - name: Setup protoc
+        if: steps.jni-cache.outputs.cache-hit != 'true'
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '35.1'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust toolchain
+        if: steps.jni-cache.outputs.cache-hit != 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.95
+          target: ${{ matrix.TARGET }}
+          cache: false
+          rustflags: ''
+
+      # Rust 增量编译缓存（target/ + registry）：EASYTIER_REF 变更时部分命中
+      - name: Cache Rust build
+        if: steps.jni-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: EasyTier
+          cache-targets: 'true'
+
+      - name: Setup Android NDK (r26)
+        if: steps.jni-cache.outputs.cache-hit != 'true'
+        id: setup-ndk-rust
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: 26.0.10792818
+
+      - name: Cache cargo-ndk binary
+        if: steps.jni-cache.outputs.cache-hit != 'true'
+        id: cargo-ndk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-bin-v1
+
+      - name: Install cargo-ndk
+        if: steps.jni-cache.outputs.cache-hit != 'true' && steps.cargo-ndk-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-ndk --locked
+
+      - name: Build EasyTier JNI
+        if: steps.jni-cache.outputs.cache-hit != 'true'
+        working-directory: EasyTier
+        run: bash ../OpenListAndroid/.github/scripts/build-easytier-jni.sh "${{ matrix.ABI }}" "${{ matrix.TARGET }}" "$GITHUB_WORKSPACE/jni-out"
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk-rust.outputs.ndk-path }}
+
+      - name: Upload EasyTier JNI libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: easytier-jni-${{ matrix.ABI }}
+          path: jni-out
+          if-no-files-found: error
+
   # Beta 编译（对齐源项目 tmp/.github/workflows/build.yaml：OpenList beta 内核 + 签名 + 分 ABI APK）
   beta:
     if: github.event_name != 'pull_request'
+    needs: [easytier-jni]
     runs-on: ubuntu-latest
     # 发布 dev Release 需要写权限（softprops/action-gh-release 用 GITHUB_TOKEN 创建 tag/release）
     permissions:
@@ -109,6 +209,22 @@ jobs:
         with:
           name: "OpenList-beta"
           path: "${{ github.workspace }}/app/libs/*.aar"
+
+      # EasyTier JNI 原生库注入 jniLibs（分 ABI；merge-multiple 合并三个 artifact 的 <abi>/ 目录）
+      - name: Download EasyTier JNI libs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: easytier-jni-*
+          path: app/src/main/jniLibs
+          merge-multiple: true
+
+      - name: Verify EasyTier JNI libs
+        run: |
+          ls -laR app/src/main/jniLibs
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            test -f "app/src/main/jniLibs/$abi/libeasytier_android_jni.so" \
+              || { echo "ERROR: missing libeasytier_android_jni.so for $abi"; exit 1; }
+          done
 
       # 与源项目同名 Secrets 键；gradle 侧由 app/build.gradle.kts 读取 local.properties
       - name: Init Signature
