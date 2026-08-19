@@ -23,9 +23,12 @@ echo "==> Build easytier-android-jni for $ABI ($RUST_TARGET)"
 echo "    ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-<unset>}"
 echo "    rustc: $(rustc --version), cargo-ndk: $(cargo ndk --version 2>/dev/null || echo '<missing>')"
 
-# -p 24：NDK API level 24（与 EasyTier 官方 Android GUI 一致；宿主 App minSdk 21 上
-# 库加载会优雅降级为「不可用」，不影响 OpenList 主功能）
-cargo ndk -t "$ABI" -p 24 build --release --package easytier-android-jni
+# NDK API level 24（与 EasyTier 官方 Android GUI 一致；宿主 App minSdk 21 上
+# 库加载会优雅降级为「不可用」，不影响 OpenList 主功能）。
+# 用 CARGO_NDK_PLATFORM 环境变量而非 -p/-P 短参：cargo-ndk 4.x 中 -p 已改为
+# cargo --package 透传，各版本短参语义不一，环境变量最稳。
+export CARGO_NDK_PLATFORM=24
+cargo ndk -t "$ABI" build --release --package easytier-android-jni
 
 SO="target/$RUST_TARGET/release/libeasytier_android_jni.so"
 if [ ! -f "$SO" ]; then

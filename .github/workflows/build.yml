@@ -102,7 +102,10 @@ jobs:
         working-directory: EasyTier
         run: bash ../OpenListAndroid/.github/scripts/build-easytier-jni.sh "${{ matrix.ABI }}" "${{ matrix.TARGET }}" "$GITHUB_WORKSPACE/jni-out"
         env:
+          # 与 runner 预装 NDK 冲突时 cargo-ndk 会告警，统一指向 r26 安装路径
           ANDROID_NDK_HOME: ${{ steps.setup-ndk-rust.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk-rust.outputs.ndk-path }}
+          ANDROID_NDK: ${{ steps.setup-ndk-rust.outputs.ndk-path }}
 
       - name: Upload EasyTier JNI libs
         uses: actions/upload-artifact@v4
