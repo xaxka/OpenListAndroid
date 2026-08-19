@@ -126,6 +126,16 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon
 
+      # APK 命名：app-<abi>-release.apk -> OpenList-<abi>-release.apk
+      - name: Rename APKs (app -> OpenList)
+        run: |
+          cd "${{ env.output }}"
+          for f in app-*.apk; do
+            [ -e "$f" ] || continue
+            mv -v "$f" "OpenList-${f#app-}"
+          done
+          ls -lh
+
       # 体积透视：每个 APK 应只含一个 lib/<abi>/ 目录；若出现多个说明 splits 泄漏
       - name: Inspect APK native libs
         run: |
