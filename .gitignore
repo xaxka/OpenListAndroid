@@ -3,6 +3,8 @@
 app/build
 local.properties
 *.keystore
+# 固定 debug 签名 keystore 随仓库分发，保证各机器/CI 的 debug 签名一致（密码 android，非敏感）
+!app/debug.keystore
 !gradle/wrapper/gradle-wrapper.jar
 
 # IDE

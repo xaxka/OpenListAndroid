@@ -77,6 +77,14 @@ android {
     }
 
     signingConfigs {
+        // 固定 debug 签名：使用随仓库分发的 app/debug.keystore（密码 android），
+        // 避免 AGP 默认按机器生成 ~/.android/debug.keystore 导致各机器/CI 每次签名不一致
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (hasReleaseKeystore) {
             create("release") {
                 storeFile = rootProject.file(releaseKeyPath!!)
