@@ -140,9 +140,6 @@ class AppPrefsRepository @Inject constructor(
     /** EasyTier 映射端口列表（逗号分隔，如 "5244" 或 "5244,8080"；每个端口映射到本机同端口） */
     val easytierPorts: Flow<String> = data.map { it[Keys.EASYTIER_PORTS] ?: "5244" }
 
-    /** EasyTier 映射端口列表（逗号分隔，如 "5244" 或 "5244,8080"；每个端口映射到本机同端口） */
-    val easytierPorts: Flow<String> = data.map { it[Keys.EASYTIER_PORTS] ?: "5244" }
-
     // ---------- 快照 ----------
 
     /** 一次性读取全部偏好 */

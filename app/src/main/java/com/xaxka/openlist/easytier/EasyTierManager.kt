@@ -22,11 +22,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.longOrNull
 import com.xaxka.openlist.data.log.ServerLog
 
 /**
@@ -53,12 +48,13 @@ class EasyTierManager @Inject constructor(
 
     enum class Phase { STOPPED, STARTING, RUNNING, STOPPING, ERROR, UNAVAILABLE }
 
-    /** UI 快照：phase + 虚拟 IPv4 + 映射端口列表 + 说明文本。 */
+    /** UI 快照：phase + 虚拟 IPv4 + 映射端口列表 + 已连节点数 + 说明文本。 */
     data class Status(
         val phase: Phase = Phase.STOPPED,
         val virtualIpv4: String? = null,
         val portMapped: Boolean = false,
         val mappedPorts: List<Int> = emptyList(),
+        val peerCount: Int = 0,
         val detail: String = "",
     ) {
         val summary: String
@@ -72,7 +68,16 @@ class EasyTierManager @Inject constructor(
             }
 
         private fun runningSummary(): String {
-            val head = if (virtualIpv4 != null) "运行中 · $virtualIpv4" else "运行中 · 等待分配虚拟 IP"
+            val head = if (virtualIpv4 != null) {
+                "运行中 · $virtualIpv4"
+            } else if (peerCount > 0) {
+                // 已组网但 DHCP 尚未分配虚拟 IP：明确展示连接状态，避免误以为没连上
+                "已连接 $peerCount 个节点 · 等待分配虚拟 IP"
+            } else {
+                "运行中 · 等待分配虚拟 IP"
+            }
+            // 端口转发下发失败等异常通过 detail 承载，优先于通用进度文案展示
+            if (detail.isNotEmpty()) return "$head · $detail"
             val tail = when {
                 portMapped && mappedPorts.isNotEmpty() ->
                     "端口 ${EasyTierSpec.formatPorts(mappedPorts)} 已映射"
@@ -84,14 +89,6 @@ class EasyTierManager @Inject constructor(
 
         private fun String.appendDetail(d: String) = if (d.isEmpty()) this else "$this：$d"
     }
-
-    /** collectNetworkInfos 中本实例的运行信息。 */
-    internal data class InstanceInfo(
-        val running: Boolean,
-        val ipv4: String?,
-        val ipv4Addr: Long?,
-        val errorMsg: String,
-    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val lock = Mutex()
@@ -116,8 +113,6 @@ class EasyTierManager @Inject constructor(
 
     @Volatile
     private var monitorJob: Job? = null
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     /** 服务 RUNNING 时调用：偏好开启则启动实例，否则无动作。 */
     fun startIfEnabled() {
@@ -235,11 +230,22 @@ class EasyTierManager @Inject constructor(
         }
         if (jsonText.isNullOrBlank()) return
 
-        val info = runCatching { parseInstanceInfo(jsonText) }.getOrElse { null }
+        val info = runCatching { EasyTierInfoParser.parse(jsonText) }.getOrElse { null }
         if (info == null) {
-            // map 中没有本实例：可能已被核心侧清理；保持 RUNNING 等待自愈，仅降级提示
+            // map 中没有本实例：可能已被核心侧清理；保持 RUNNING 等待自愈，仅降级提示。
+            // 保留上次已知的虚拟 IP/映射状态，避免轮询抖动导致页面闪回「等待分配虚拟 IP」。
             if (_state.value.phase == Phase.RUNNING) {
-                transition(Status(Phase.RUNNING, detail = "实例信息暂缺"))
+                val prev = _state.value
+                transition(
+                    Status(
+                        Phase.RUNNING,
+                        virtualIpv4 = prev.virtualIpv4,
+                        portMapped = prev.portMapped,
+                        mappedPorts = prev.mappedPorts,
+                        peerCount = prev.peerCount,
+                        detail = "实例信息暂缺",
+                    )
+                )
             }
             return
         }
@@ -256,7 +262,10 @@ class EasyTierManager @Inject constructor(
         val addr = info.ipv4Addr
         val desired = desiredPorts(prefs.easytierPorts.first())
 
-        // DHCP 虚拟 IP 已分配：确保转发规则与当前 IP 及端口列表一致（首次/变更时增量下发）
+        // DHCP 虚拟 IP 已分配：确保转发规则与当前 IP 及端口列表一致（首次/变更时增量下发）。
+        // 注意：转发下发结果不能阻塞状态刷新——否则一旦下发失败提前返回，页面会一直
+        // 停在「等待分配虚拟 IP」，即便实例已连接并拿到 IP。
+        var forwardDetail = ""
         if (addr != null) {
             val oldAddr = forwardedAddr
             val oldPorts = forwardedPorts
@@ -267,15 +276,21 @@ class EasyTierManager @Inject constructor(
                 val removeAddr = if (ipChanged) oldAddr!! else addr
                 val removePorts = if (ipChanged) oldPorts else (oldPorts - desired.toSet())
                 val addPorts = if (oldAddr == null || ipChanged) desired else (desired - oldPorts.toSet())
-                if (!applyPortForward(removeAddr, removePorts, addr, addPorts, desired, info.ipv4)) return
+                if (!applyPortForward(removeAddr, removePorts, addr, addPorts, desired, info.ipv4)) {
+                    forwardDetail = "端口映射下发失败，稍后自动重试"
+                }
             }
         }
 
+        // 状态始终反映已知的虚拟 IP（与端口映射下发结果解耦）：
+        // 拿到 DHCP IP 即显示「运行中 · <IP>」，映射失败以 detail 提示并在下一轮重试。
         val next = Status(
             Phase.RUNNING,
             virtualIpv4 = info.ipv4,
             portMapped = forwardedAddr != null && forwardedPorts.isNotEmpty(),
             mappedPorts = forwardedPorts,
+            peerCount = info.peerCount,
+            detail = forwardDetail,
         )
         if (next != _state.value) transition(next)
     }
@@ -328,37 +343,6 @@ class EasyTierManager @Inject constructor(
                 "当前映射 ${EasyTierSpec.formatPorts(forwardedPorts)}",
         )
         return true
-    }
-
-    /** 提取实例运行信息；map 中未找到本实例返回 null。 */
-    internal fun parseInstanceInfo(jsonText: String): InstanceInfo? {
-        val root = json.parseToJsonElement(jsonText) as? JsonObject ?: return null
-        val map = objOrCamel(root, "map") ?: return null
-        val entry = objOrCamel(map, EasyTierSpec.INSTANCE_NAME) ?: return null
-
-        val running = (entry["running"] as? JsonPrimitive)?.booleanOrNull ?: false
-        val errorMsg = (entry["error_msg"] as? JsonPrimitive)?.content.orEmpty()
-
-        var ipv4: String? = null
-        var addr: Long? = null
-        val nodeInfo = objOrCamel(entry, "my_node_info")
-        val v4 = nodeInfo?.let { objOrCamel(it, "virtual_ipv4") }
-        if (v4 != null) {
-            val raw = objOrCamel(v4, "address")?.let { (it["addr"] as? JsonPrimitive)?.longOrNull }
-            if (raw != null) {
-                addr = raw
-                ipv4 = EasyTierSpec.formatIpv4(raw)
-            }
-        }
-        return InstanceInfo(running, ipv4, addr, errorMsg)
-    }
-
-    /** pbjson 配置了 preserve_proto_field_names，这里仍做 camelCase 兜底。 */
-    private fun objOrCamel(obj: JsonObject, snakeKey: String): JsonObject? {
-        val camel = snakeKey.split('_').mapIndexed { i, part ->
-            if (i == 0) part else part.replaceFirstChar { it.uppercase() }
-        }.joinToString("")
-        return (obj[snakeKey] ?: obj[camel]) as? JsonObject
     }
 
     private fun transition(status: Status) {
