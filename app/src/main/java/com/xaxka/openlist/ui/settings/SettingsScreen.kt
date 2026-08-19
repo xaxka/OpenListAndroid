@@ -346,7 +346,7 @@ internal fun SettingsSubPageTopBar(
 
 /** 子页面入口右侧箭头。 */
 @Composable
-private fun SettingsChevron() {
+internal fun SettingsChevron() {
     Icon(
         imageVector = Icons.Outlined.ChevronRight,
         contentDescription = null,

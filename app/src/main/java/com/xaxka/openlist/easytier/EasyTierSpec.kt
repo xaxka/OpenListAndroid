@@ -196,6 +196,14 @@ object EasyTierSpec {
         return "$a.$b.$c.$d"
     }
 
+    /** 字节数 → 人类可读流量（1024 进制，保留一位小数）：0B / 1.2KB / 34.5MB / 1.1GB。 */
+    fun formatBytes(bytes: Long): String = when {
+        bytes < 1024 -> "${bytes.coerceAtLeast(0)}B"
+        bytes < 1024L * 1024 -> "${"%.1f".format(bytes / 1024.0)}KB"
+        bytes < 1024L * 1024 * 1024 -> "${"%.1f".format(bytes / (1024.0 * 1024))}MB"
+        else -> "${"%.1f".format(bytes / (1024.0 * 1024 * 1024))}GB"
+    }
+
     /** TOML basic-string 转义：反斜杠、双引号与控制字符。 */
     internal fun tomlString(value: String): String {
         val sb = StringBuilder(value.length + 2)

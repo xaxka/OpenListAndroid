@@ -18,7 +18,7 @@ import kotlinx.serialization.json.longOrNull
  * @param peerCount 当前已连接的对等节点数量（未连接/未组网为 0）
  * @param errorMsg 最近一次错误信息（无错误为空串）
  * @param myNode 本节点信息（peer_id / 主机名 / 版本 / 监听器 / NAT；未就绪为 null）
- * @param peers 已连接对等节点明细（含各连接的隧道/延迟/丢包）
+ * @param peers 已连接对等节点明细（含各连接的隧道/延迟/丢包/流量/P2P 直连标记）
  * @param routes 虚拟网络路由表（到各节点的路径/跳数/延迟）
  * @param events 实例事件日志（核心侧文本，按发生顺序）
  */
@@ -59,10 +59,17 @@ data class PeerDetail(
 
 /** 对等节点的一条连接（隧道）信息。 */
 data class PeerConn(
+    val connId: String,
     val tunnelType: String,
     val remoteAddr: String?,
     val lossRate: Float,
     val latencyMs: Long,
+    /** 本连接的累计接收流量（下行，自连接建立起）。 */
+    val rxBytes: Long,
+    /** 本连接的累计发送流量（上行，自连接建立起）。 */
+    val txBytes: Long,
+    /** 是否 P2P 直连（命中 PeerInfo.directly_connected_conns；否则经中继转发）。 */
+    val isDirect: Boolean,
     val isClient: Boolean,
 )
 
@@ -84,6 +91,9 @@ data class RouteDetail(
  * - 顶层 NetworkInstanceRunningInfoMap { map<instance_name, NetworkInstanceRunningInfo> }
  * - NetworkInstanceRunningInfo { running, error_msg, my_node_info, peers, routes, events, ... }
  * - MyNodeInfo.virtual_ipv4 = Ipv4Inet { address: Ipv4Addr { addr: uint32 大端 } }
+ * - PeerInfo { peer_id, conns, default_conn_id, directly_connected_conns }，其中
+ *   directly_connected_conns 为 UUID{part1..4} 数组，与各 PeerConnInfo.conn_id
+ *  （uuid 字符串）按标准 8-4-4-4-12 形式对应，用于判定 P2P 直连
  *
  * pbjson 按 proto 字段名输出（snake_case），这里仍做 camelCase 兜底。
  */
@@ -194,20 +204,31 @@ internal object EasyTierInfoParser {
     }
 
     private fun parsePeer(peer: JsonObject): PeerDetail {
-        val conns = (peer["conns"] as? JsonArray)?.mapNotNull { (it as? JsonObject)?.let(::parseConn) }
+        // UUID{part1..4} 数组 → conn_id 字符串集合（P2P 直连判定）
+        val directConnIds = arrOrCamel(peer, "directly_connected_conns")
+            ?.mapNotNull { (it as? JsonObject)?.let(::uuidStringOf) }
+            ?.toSet() ?: emptySet()
+        val conns = (peer["conns"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonObject)?.let { c -> parseConn(c, directConnIds) } }
             ?: emptyList()
         return PeerDetail(peerId = longOf(peer, "peer_id") ?: 0L, conns = conns)
     }
 
-    private fun parseConn(conn: JsonObject): PeerConn {
+    private fun parseConn(conn: JsonObject, directConnIds: Set<String>): PeerConn {
         val tunnel = objOrCamel(conn, "tunnel")
         val remoteUrl = tunnel?.let { objOrCamel(it, "remote_addr") }?.let { strOf(it, "url") }
-        val latencyUs = objOrCamel(conn, "stats")?.let { longOf(it, "latency_us") } ?: 0L
+        val stats = objOrCamel(conn, "stats")
+        val connId = strOf(conn, "conn_id")
         return PeerConn(
+            connId = connId,
             tunnelType = tunnel?.let { strOf(it, "tunnel_type") }.orEmpty(),
             remoteAddr = remoteUrl,
             lossRate = primOf(conn, "loss_rate")?.floatOrNull ?: 0f,
-            latencyMs = latencyUs / 1000,
+            latencyMs = (stats?.let { longOf(it, "latency_us") } ?: 0L) / 1000,
+            rxBytes = stats?.let { longOf(it, "rx_bytes") } ?: 0L,
+            txBytes = stats?.let { longOf(it, "tx_bytes") } ?: 0L,
+            // conn_id 为空兜底不判直连；对照 EasyTier api.rs 的 default_conn_id 比较方式
+            isDirect = connId.isNotEmpty() && connId in directConnIds,
             isClient = primOf(conn, "is_client")?.booleanOrNull ?: false,
         )
     }
@@ -228,12 +249,14 @@ internal object EasyTierInfoParser {
         )
     }
 
-    private fun primOf(obj: JsonObject, snakeKey: String): JsonPrimitive? {
-        val camel = snakeKey.split('_').mapIndexed { i, part ->
+    /** snake_case → camelCase（pbjson 兜底键名）。 */
+    private fun camelKey(snakeKey: String): String =
+        snakeKey.split('_').mapIndexed { i, part ->
             if (i == 0) part else part.replaceFirstChar { it.uppercase() }
         }.joinToString("")
-        return (obj[snakeKey] ?: obj[camel]) as? JsonPrimitive
-    }
+
+    private fun primOf(obj: JsonObject, snakeKey: String): JsonPrimitive? =
+        (obj[snakeKey] ?: obj[camelKey(snakeKey)]) as? JsonPrimitive
 
     private fun strOf(obj: JsonObject, key: String): String =
         primOf(obj, key)?.content.orEmpty()
@@ -241,10 +264,29 @@ internal object EasyTierInfoParser {
     private fun longOf(obj: JsonObject, key: String): Long? =
         primOf(obj, key)?.longOrNull
 
-    private fun objOrCamel(obj: JsonObject, snakeKey: String): JsonObject? {
-        val camel = snakeKey.split('_').mapIndexed { i, part ->
-            if (i == 0) part else part.replaceFirstChar { it.uppercase() }
-        }.joinToString("")
-        return (obj[snakeKey] ?: obj[camel]) as? JsonObject
+    private fun objOrCamel(obj: JsonObject, snakeKey: String): JsonObject? =
+        (obj[snakeKey] ?: obj[camelKey(snakeKey)]) as? JsonObject
+
+    private fun arrOrCamel(obj: JsonObject, snakeKey: String): JsonArray? =
+        (obj[snakeKey] ?: obj[camelKey(snakeKey)]) as? JsonArray
+
+    /**
+     * UUID{part1..4}（四个 uint32 按序拼成 uuid crate 的 16 字节大端序）→
+     * 标准 8-4-4-4-12 连字符小写形式，与 PeerConnInfo.conn_id 字符串一致。
+     * pbjson 序列化会省略为 0 的字段，缺失部分按 0 处理。
+     */
+    private fun uuidStringOf(obj: JsonObject): String {
+        val p1 = longOf(obj, "part1") ?: 0L
+        val p2 = longOf(obj, "part2") ?: 0L
+        val p3 = longOf(obj, "part3") ?: 0L
+        val p4 = longOf(obj, "part4") ?: 0L
+        fun hex(v: Long, bytes: Int): String = v.toString(16).padStart(bytes * 2, '0')
+        return buildString {
+            append(hex(p1, 4)); append('-')
+            append(hex(p2 shr 16, 2)); append('-')
+            append(hex(p2 and 0xFFFFL, 2)); append('-')
+            append(hex(p3 shr 16, 2)); append('-')
+            append(hex(p3 and 0xFFFFL, 2)); append(hex(p4, 4))
+        }
     }
 }

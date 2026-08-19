@@ -54,17 +54,17 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.xaxka.openlist.easytier.EasyTierManager
+import com.xaxka.openlist.easytier.EasyTierSpec
+import com.xaxka.openlist.easytier.PeerConn
 import com.xaxka.openlist.easytier.PeerDetail
 import com.xaxka.openlist.easytier.RouteDetail
+import com.xaxka.openlist.ui.nav.Routes
 import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.theme.InputHint
 import com.xaxka.openlist.ui.theme.InputLabel
 import com.xaxka.openlist.ui.theme.ShapeInputOutlineR4
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-/** 事件日志在设置页的最大展示条数（更早的省略，避免页面过长）。 */
-private const val EVENTS_DISPLAY_LIMIT = 30
 
 /** 网络节点在设置页的最大展示条数。 */
 private const val NODES_DISPLAY_LIMIT = 20
@@ -73,7 +73,7 @@ private const val NODES_DISPLAY_LIMIT = 20
  * 设置子页面：内网映射（EasyTier，no-tun 不使用 VPN）。
  * 内容自设置主页面拆分而来；返回键由顶栏按钮与系统回退共同支持（NavHost 栈）。
  *
- * 下半部分为只读「运行状态」区：网络状态、本节点信息、网络节点、事件日志、启动配置。
+ * 下半部分为只读「运行状态」区：映射状态（点击进入事件日志页）、本节点信息、网络节点、启动配置。
  */
 @Composable
 fun EasyTierSettingsScreen(
@@ -167,7 +167,9 @@ fun EasyTierSettingsScreen(
                 SettingsBasicPreference(
                     title = "映射状态",
                     subtitle = state.easytierStatus,
-                    leading = { SettingsPreferenceIcon(Icons.Outlined.Info) }
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.Info) },
+                    trailing = { SettingsChevron() },
+                    onTap = { navController.navigate(Routes.SETTINGS_EASYTIER_EVENTS) }
                 )
 
                 EasyTierStatusSection(detail = state.easytierDetail)
@@ -266,7 +268,8 @@ fun EasyTierSettingsScreen(
 }
 
 /**
- * 只读运行状态区：本节点信息 + 网络节点（路由/对等合并）+ 事件日志。
+ * 只读运行状态区：本节点信息 + 网络节点（路由/对等合并）。
+ * 事件日志内容较多，拆到独立页面（点击「映射状态」进入，见 EasyTierEventsScreen）。
  * 数据均来自 collectNetworkInfos 的最近一次解析快照，随轮询自动刷新。
  */
 @Composable
@@ -318,33 +321,6 @@ private fun EasyTierStatusSection(detail: EasyTierManager.Status) {
             }
         }
     }
-
-    // ---- 事件日志 ----
-    if (detail.events.isNotEmpty()) {
-        val shown = detail.events.takeLast(EVENTS_DISPLAY_LIMIT)
-        StatusCard("事件日志（${detail.events.size}）") {
-            SelectionContainer {
-                Column {
-                    shown.forEach { event ->
-                        Text(
-                            event,
-                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(vertical = 1.dp)
-                        )
-                    }
-                }
-            }
-            if (detail.events.size > EVENTS_DISPLAY_LIMIT) {
-                Text(
-                    "仅显示最近 $EVENTS_DISPLAY_LIMIT 条",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-        }
-    }
 }
 
 /** 路由表中的一个节点 + 对应的连接明细（若有）。 */
@@ -366,20 +342,7 @@ private fun RouteNodeBlock(route: RouteDetail, peer: PeerDetail?) {
             if (route.version.isNotBlank()) append(" · v${route.version}")
         }
         Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        peer?.conns?.forEach { conn ->
-            val connText = buildString {
-                append("    ")
-                append(conn.tunnelType.ifBlank { "tunnel" })
-                conn.remoteAddr?.let { append(" → ").append(it) }
-                if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
-                if (conn.lossRate > 0f) append(" · 丢包 ${"%.1f".format(conn.lossRate * 100)}%")
-            }
-            Text(
-                connText,
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        peer?.conns?.forEach { conn -> ConnDetailLine(conn) }
     }
 }
 
@@ -388,25 +351,36 @@ private fun RouteNodeBlock(route: RouteDetail, peer: PeerDetail?) {
 private fun PeerOnlyBlock(peer: PeerDetail) {
     Column(Modifier.padding(vertical = 6.dp)) {
         Text("Peer ${peer.peerId}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-        peer.conns.forEach { conn ->
-            val connText = buildString {
-                append("    ")
-                append(conn.tunnelType.ifBlank { "tunnel" })
-                conn.remoteAddr?.let { append(" → ").append(it) }
-                if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
-            }
-            Text(
-                connText,
-                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        peer.conns.forEach { conn -> ConnDetailLine(conn) }
     }
+}
+
+/**
+ * 单条连接明细行：隧道类型 → 对端地址 · 直连/中继 · 延迟 · 丢包 · ↓收 ↑发。
+ * 直连/中继按 P2P 打洞结果（directly_connected_conns）判定；丢包与流量恒定展示
+ * （0 表示无丢包/尚无流量），不再像旧实现只在非零时才出现。
+ */
+@Composable
+private fun ConnDetailLine(conn: PeerConn) {
+    val text = buildString {
+        append("    ")
+        append(conn.tunnelType.ifBlank { "tunnel" })
+        conn.remoteAddr?.let { append(" → ").append(it) }
+        append(if (conn.isDirect) " · P2P 直连" else " · 中继")
+        if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
+        append(" · 丢包 ${"%.1f".format(conn.lossRate * 100)}%")
+        append(" · ↓${EasyTierSpec.formatBytes(conn.rxBytes)} ↑${EasyTierSpec.formatBytes(conn.txBytes)}")
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 /** 状态卡片：浅色底 + R8 圆角 + 标题（primary labelLarge）。 */
 @Composable
-private fun StatusCard(title: String, content: @Composable () -> Unit) {
+internal fun StatusCard(title: String, content: @Composable () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
