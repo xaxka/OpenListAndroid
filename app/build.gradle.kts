@@ -20,11 +20,12 @@ fun computeVersionName(): String {
     return fmt.format(Date())
 }
 
-// versionCode 同源日期制（yyMMddHH），保证覆盖安装可识别升级
+// versionCode 同源日期制：yyMMddHHt（9 位，t=分钟十位 0-5），保证覆盖安装可识别升级；CI 可用 -PversionCode 覆盖
 fun computeVersionCode(): Int {
-    val fmt = SimpleDateFormat("yyMMddHH")
+    if (project.hasProperty("versionCode")) return (project.property("versionCode") as String).toInt()
+    val fmt = SimpleDateFormat("yyMMddHHmm")
     fmt.timeZone = TimeZone.getTimeZone("GMT+8")
-    return fmt.format(Date()).toInt()
+    return fmt.format(Date()).dropLast(1).toInt()
 }
 
 val goAarDir = layout.projectDirectory.dir("libs")

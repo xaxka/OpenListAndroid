@@ -16,6 +16,9 @@ jobs:
   beta:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # 发布 dev Release 需要写权限（softprops/action-gh-release 用 GITHUB_TOKEN 创建 tag/release）
+    permissions:
+      contents: write
     env:
       output: "${{ github.workspace }}/app/build/outputs/apk/release"
     steps:
@@ -166,3 +169,16 @@ jobs:
           name: "OpenListFlutter-beta-v${{ env.ver_name }}_x86_64"
           path: "${{ env.output }}/*x86_64*.apk"
           if-no-files-found: error
+
+      # 滚动 dev 预发布：固定 tag `dev`，每次构建覆盖同名 Release 资产（三个分 ABI APK）
+      - name: Publish dev build to GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: dev
+          name: dev
+          body: |
+            - Branch: ${{ github.ref_name }}
+            - Commit: ${{ github.sha }}
+            - Built at: ${{ github.event.head_commit.timestamp }}
+          prerelease: true
+          files: ${{ env.output }}/*.apk
