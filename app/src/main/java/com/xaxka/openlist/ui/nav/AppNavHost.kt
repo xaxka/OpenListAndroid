@@ -33,7 +33,9 @@ import androidx.navigation.compose.rememberNavController
 import com.xaxka.openlist.R
 import com.xaxka.openlist.ui.main.HomeScreen
 import com.xaxka.openlist.ui.main.HomeViewModel
+import com.xaxka.openlist.ui.settings.EasyTierSettingsScreen
 import com.xaxka.openlist.ui.settings.SettingsScreen
+import com.xaxka.openlist.ui.settings.VideoHashSettingsScreen
 import com.xaxka.openlist.ui.theme.AnimPageFade
 import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.web.WebScreen
@@ -45,6 +47,10 @@ object Routes {
     const val WEB = "web"
     const val HOME = "home"
     const val SETTINGS = "settings"
+
+    /** 设置子页面（设置页内入口进入，返回回到设置页） */
+    const val SETTINGS_VIDEOHASH = "settings/videohash"
+    const val SETTINGS_EASYTIER = "settings/easytier"
 }
 
 private data class TabItem(
@@ -98,8 +104,11 @@ fun AppNavHost(
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 tabs.forEach { tab ->
+                    // 设置子页面（settings/*）仍归属「设置」tab 高亮
+                    val selected = currentRoute == tab.route ||
+                        (tab.route == Routes.SETTINGS && currentRoute?.startsWith(Routes.SETTINGS) == true)
                     NavigationBarItem(
-                        selected = currentRoute == tab.route,
+                        selected = selected,
                         onClick = {
                             if (currentRoute == tab.route) {
                                 // 已在网页页时再点网页 tab → 重载（源 onClickNavigationBar）
@@ -144,7 +153,9 @@ fun AppNavHost(
         ) {
             composable(Routes.HOME) { HomeScreen(viewModel = homeViewModel) }
             composable(Routes.WEB) { WebScreen(viewModel = webViewModel, stateHolder = webStateHolder) }
-            composable(Routes.SETTINGS) { SettingsScreen() }
+            composable(Routes.SETTINGS) { SettingsScreen(navController = navController) }
+            composable(Routes.SETTINGS_VIDEOHASH) { VideoHashSettingsScreen(navController = navController) }
+            composable(Routes.SETTINGS_EASYTIER) { EasyTierSettingsScreen(navController = navController) }
         }
     }
 }

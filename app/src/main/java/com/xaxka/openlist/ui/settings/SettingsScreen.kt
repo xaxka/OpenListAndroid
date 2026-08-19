@@ -8,105 +8,91 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Hub
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lan
-import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanToolAlt
-import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.PowerSettingsNew
-import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.ScreenLockPortrait
-import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavHostController
+import com.xaxka.openlist.ui.nav.Routes
 import com.xaxka.openlist.ui.theme.Dimens
-import com.xaxka.openlist.ui.theme.InputHint
-import com.xaxka.openlist.ui.theme.InputLabel
-import com.xaxka.openlist.ui.theme.ShapeInputOutlineR4
 import com.xaxka.openlist.video.SafHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // 文案照源 intl_zh.arb 迁移（OpenList 化）
-private const val TEXT_IMPORTANT = "重要"
-private const val TEXT_GENERAL = "通用"
-private const val TEXT_VIDEO_HASH = "视频洗码"
-private const val TEXT_UI = "界面"
+internal const val TEXT_IMPORTANT = "重要"
+internal const val TEXT_GENERAL = "通用"
+internal const val TEXT_FEATURES = "扩展功能"
+internal const val TEXT_UI = "界面"
 
-private const val TEXT_GRANT_MANAGER_STORAGE = "申请【所有文件访问权限】"
-private const val TEXT_GRANT_STORAGE = "申请【读写外置存储权限】"
-private const val TEXT_STORAGE_DESC = "挂载本地存储时必须授予，否则无权限读写文件"
-private const val TEXT_GRANT_NOTIFICATION = "申请【通知权限】"
-private const val TEXT_NOTIFICATION_DESC = "用于前台服务保活"
+internal const val TEXT_GRANT_MANAGER_STORAGE = "申请【所有文件访问权限】"
+internal const val TEXT_GRANT_STORAGE = "申请【读写外置存储权限】"
+internal const val TEXT_STORAGE_DESC = "挂载本地存储时必须授予，否则无权限读写文件"
+internal const val TEXT_GRANT_NOTIFICATION = "申请【通知权限】"
+internal const val TEXT_NOTIFICATION_DESC = "用于前台服务保活"
 
-private const val TEXT_CANCEL = "取消"
-private const val TEXT_CONFIRM = "确认"
+internal const val TEXT_CANCEL = "取消"
+internal const val TEXT_CONFIRM = "确认"
 
-private const val TEXT_NO_DIRS = "未设置监听目录"
-private const val TEXT_ENTER_SUFFIX = "请输入追加文字"
-private const val TEXT_RUNNING = "运行中"
-private const val TEXT_IDLE = "空闲"
-private const val DEFAULT_SUFFIX = "HashMod"
+internal const val TEXT_NO_DIRS = "未设置监听目录"
+internal const val TEXT_RUNNING = "运行中"
+internal const val TEXT_IDLE = "空闲"
+internal const val DEFAULT_SUFFIX = "HashMod"
 
-private const val SNACK_DURATION_SHORT = 2000L
-private const val SNACK_DURATION_LONG = 3000L
+internal const val SNACK_DURATION_LONG = 3000L
 
 /**
- * 设置页（源 settings.dart）：权限组（动态显隐）→ 通用 → 视频洗码 → 界面。
+ * 设置页（源 settings.dart）：权限组（动态显隐）→ 通用 → 扩展功能入口 → 界面。
+ * 视频洗码与内网映射（EasyTier）拆为子页面（见 VideoHashSettingsScreen / EasyTierSettingsScreen）。
  * 无 AppBar，Scaffold 背景与底部导航由主框架提供。
  */
 @Composable
 fun SettingsScreen(
+    navController: NavHostController? = null,
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
-
-    var showSuffixDialog by remember { mutableStateOf(false) }
-    var showStatusDialog by remember { mutableStateOf(false) }
-    var showEasytierNetworkDialog by remember { mutableStateOf(false) }
-    var showEasytierSecretDialog by remember { mutableStateOf(false) }
-    var showEasytierPeerDialog by remember { mutableStateOf(false) }
 
     // 从系统设置/权限弹窗返回后刷新权限条目（源 AppLifecycleListener.onResume → updateData）
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -140,17 +126,6 @@ fun SettingsScreen(
         } else {
             handlePickedDir(context, uri, onError = { viewModel.snack(it, SNACK_DURATION_LONG) }) { path ->
                 viewModel.setDataDir(path)
-            }
-        }
-    }
-
-    // SAF 洗码监听目录选择（仅单目录，新选替换旧；取消不改原值）
-    val pickVideoDirLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            handlePickedDir(context, uri, onError = { viewModel.snack(it, SNACK_DURATION_LONG) }) { path ->
-                viewModel.setVideoHashDirs(listOf(path))
             }
         }
     }
@@ -268,89 +243,23 @@ fun SettingsScreen(
                 onCheckedChange = viewModel::setNoMemoryCache
             )
 
-            // ---------- 内网映射（EasyTier，no-tun 不使用 VPN） ----------
-            SettingsDividerPreference("内网映射（EasyTier）")
-            SettingsSwitchPreference(
-                title = "启用内网映射",
-                subtitle = "随服务启停；no-tun 模式（不使用 VPN），把本机 5244 端口映射进 EasyTier 虚拟网络",
-                icon = Icons.Outlined.Lan,
-                value = state.easytierEnabled,
-                onCheckedChange = viewModel::setEasytierEnabled
+            // ---------- 扩展功能（子页面入口） ----------
+            SettingsDividerPreference(TEXT_FEATURES)
+            SettingsBasicPreference(
+                title = "视频洗码",
+                subtitle = state.videoHashStatus.ifEmpty {
+                    if (state.videoHashRunning) TEXT_RUNNING else TEXT_IDLE
+                },
+                leading = { SettingsPreferenceIcon(Icons.Outlined.Movie) },
+                trailing = { SettingsChevron() },
+                onTap = { navController?.navigate(Routes.SETTINGS_VIDEOHASH) }
             )
             SettingsBasicPreference(
-                title = "网络名称",
-                subtitle = state.easytierNetwork.ifBlank { "（留空使用默认网络 default）" },
-                leading = { SettingsPreferenceIcon(Icons.Outlined.Hub) },
-                onTap = { showEasytierNetworkDialog = true }
-            )
-            SettingsBasicPreference(
-                title = "网络密钥",
-                subtitle = if (state.easytierNetworkSecret.isNotBlank()) "已设置" else "（留空）",
-                leading = { SettingsPreferenceIcon(Icons.Outlined.Key) },
-                onTap = { showEasytierSecretDialog = true }
-            )
-            SettingsBasicPreference(
-                title = "对等节点",
-                subtitle = state.easytierPeerUri.ifBlank { "（留空不配置 peer）" },
-                leading = { SettingsPreferenceIcon(Icons.Outlined.Link) },
-                onTap = { showEasytierPeerDialog = true }
-            )
-            SettingsBasicPreference(
-                title = "映射状态",
+                title = "内网映射（EasyTier）",
                 subtitle = state.easytierStatus,
-                leading = { SettingsPreferenceIcon(Icons.Outlined.Info) }
-            )
-
-            // ---------- 视频洗码（仅手动触发，无后台自动洗码） ----------
-            SettingsDividerPreference(TEXT_VIDEO_HASH)
-            SettingsBasicPreference(
-                title = "立即处理",
-                subtitle = "立即洗码监听目录中的视频文件",
-                leading = { SettingsPreferenceIcon(Icons.Outlined.PlayCircleOutline) },
-                onTap = viewModel::startScan
-            )
-            SettingsBasicPreference(
-                title = "立即还原",
-                subtitle = "检测已洗码的视频文件并还原",
-                leading = { SettingsPreferenceIcon(Icons.Outlined.Restore) },
-                onTap = viewModel::startRestore
-            )
-            SettingsBasicPreference(
-                title = "监听目录",
-                subtitle = state.videoHashDirs.firstOrNull() ?: TEXT_NO_DIRS,
-                leading = { SettingsPreferenceIcon(Icons.Outlined.FolderOpen) },
-                onTap = { pickVideoDirLauncher.launch(null) }
-            )
-            SettingsBasicPreference(
-                title = "追加文字",
-                subtitle = state.videoHashSuffix.ifEmpty { DEFAULT_SUFFIX },
-                leading = { SettingsPreferenceIcon(Icons.Outlined.TextFields) },
-                onTap = { showSuffixDialog = true }
-            )
-            SettingsBasicPreference(
-                title = "处理状态",
-                subtitle = when {
-                    state.videoHashRunning -> TEXT_RUNNING
-                    state.videoHashDirs.isEmpty() -> TEXT_NO_DIRS
-                    else -> TEXT_IDLE
-                },
-                leading = {
-                    if (state.videoHashRunning) SettingsProgressSpinner()
-                    else SettingsPreferenceIcon(Icons.Outlined.Info)
-                },
-                trailing = {
-                    if (state.videoHashStatus.isNotEmpty()) {
-                        Icon(
-                            imageVector = Icons.Outlined.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .width(Dimens.ChevronIconSize)
-                                .height(Dimens.ChevronIconSize)
-                        )
-                    }
-                },
-                onTap = { showStatusDialog = true }
+                leading = { SettingsPreferenceIcon(Icons.Outlined.Lan) },
+                trailing = { SettingsChevron() },
+                onTap = { navController?.navigate(Routes.SETTINGS_EASYTIER) }
             )
 
             // ---------- 界面 ----------
@@ -383,64 +292,10 @@ fun SettingsScreen(
             modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
-
-    if (showSuffixDialog) {
-        SuffixEditDialog(
-            initial = state.videoHashSuffix,
-            onDismiss = { showSuffixDialog = false },
-            onConfirm = { suffix ->
-                viewModel.setVideoHashSuffix(suffix)
-                showSuffixDialog = false
-            }
-        )
-    }
-    if (showStatusDialog) {
-        StatusDialog(
-            status = state.videoHashStatus.ifEmpty { TEXT_IDLE },
-            onDismiss = { showStatusDialog = false }
-        )
-    }
-    if (showEasytierNetworkDialog) {
-        EasyTierTextDialog(
-            title = "网络名称",
-            initial = state.easytierNetwork,
-            placeholder = "留空使用默认网络 default",
-            onDismiss = { showEasytierNetworkDialog = false },
-            onConfirm = {
-                viewModel.setEasytierNetwork(it.trim())
-                showEasytierNetworkDialog = false
-            }
-        )
-    }
-    if (showEasytierSecretDialog) {
-        EasyTierTextDialog(
-            title = "网络密钥",
-            initial = state.easytierNetworkSecret,
-            placeholder = "与对端一致的网络密钥",
-            password = true,
-            onDismiss = { showEasytierSecretDialog = false },
-            onConfirm = {
-                viewModel.setEasytierNetworkSecret(it)
-                showEasytierSecretDialog = false
-            }
-        )
-    }
-    if (showEasytierPeerDialog) {
-        EasyTierTextDialog(
-            title = "对等节点 URI",
-            initial = state.easytierPeerUri,
-            placeholder = "如 tcp://host:11010 或公共服务器 URI",
-            onDismiss = { showEasytierPeerDialog = false },
-            onConfirm = {
-                viewModel.setEasytierPeerUri(it.trim())
-                showEasytierPeerDialog = false
-            }
-        )
-    }
 }
 
 /** SAF 选目录结果统一处理：持久化授权 + treeUri→路径；失败文案照源 MethodChannel error(code: message) */
-private fun handlePickedDir(
+internal fun handlePickedDir(
     context: android.content.Context,
     uri: Uri,
     onError: (String) -> Unit,
@@ -459,99 +314,44 @@ private fun handlePickedDir(
     }
 }
 
-/** 追加文字对话框（源 settings.dart L329-359） */
+/** 子页面统一顶栏：返回按钮 + 标题（无 AppBar 风格延续，自管状态栏 inset 由页面提供）。 */
 @Composable
-private fun SuffixEditDialog(
-    initial: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var text by remember { mutableStateOf(initial) }
-    SettingsAlertDialog(
-        onDismissRequest = onDismiss,
-        title = "追加文字",
-        content = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("请输入追加文字", style = InputLabel) },
-                placeholder = { Text(DEFAULT_SUFFIX, style = InputHint) },
-                singleLine = true,
-                shape = ShapeInputOutlineR4,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        actions = {
-            SettingsDialogTextButton(text = TEXT_CANCEL, onClick = onDismiss)
-            SettingsDialogTextButton(text = TEXT_CONFIRM, onClick = { onConfirm(text) })
-        }
-    )
-}
-
-/** 处理状态对话框（源 settings.dart L430-446） */
-@Composable
-private fun StatusDialog(
-    status: String,
-    onDismiss: () -> Unit
-) {
-    SettingsAlertDialog(
-        onDismissRequest = onDismiss,
-        title = "处理状态",
-        content = {
-            Text(
-                status,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        },
-        actions = {
-            SettingsDialogTextButton(text = TEXT_CONFIRM, onClick = onDismiss)
-        }
-    )
-}
-
-/** EasyTier 配置文本输入对话框（网络名称/密钥/对端 URI 复用；密钥走密码掩码）。 */
-@Composable
-private fun EasyTierTextDialog(
+internal fun SettingsSubPageTopBar(
     title: String,
-    initial: String,
-    placeholder: String,
-    password: Boolean = false,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onBack: () -> Unit
 ) {
-    var text by remember { mutableStateOf(initial) }
-    SettingsAlertDialog(
-        onDismissRequest = onDismiss,
-        title = title,
-        content = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text(title, style = InputLabel) },
-                placeholder = { Text(placeholder, style = InputHint) },
-                singleLine = true,
-                shape = ShapeInputOutlineR4,
-                visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation()
-                else androidx.compose.ui.text.input.VisualTransformation.None,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent
-                ),
-                modifier = Modifier.fillMaxWidth()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = Dimens.DividerTitlePaddingH - Dimens.RowPaddingH, end = Dimens.RowPaddingH)
+            .padding(vertical = Dimens.RowPaddingV / 2),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onBack, modifier = Modifier.size(Dimens.IconButtonSize)) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "返回",
+                tint = MaterialTheme.colorScheme.onSurface
             )
-        },
-        actions = {
-            SettingsDialogTextButton(text = TEXT_CANCEL, onClick = onDismiss)
-            SettingsDialogTextButton(text = TEXT_CONFIRM, onClick = { onConfirm(text) })
         }
+        Spacer(Modifier.width(Dimens.CardSpacing))
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+/** 子页面入口右侧箭头。 */
+@Composable
+private fun SettingsChevron() {
+    Icon(
+        imageVector = Icons.Outlined.ChevronRight,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .width(Dimens.ChevronIconSize)
+            .height(Dimens.ChevronIconSize)
     )
 }
