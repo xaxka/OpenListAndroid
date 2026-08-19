@@ -56,7 +56,7 @@ class EasyTierManager @Inject constructor(
         private const val EVENTS_KEEP = 200
     }
 
-    enum class Phase { STOPPED, STARTING, RUNNING, STOPPING, ERROR, UNAVAILABLE }
+    enum class Phase { STOPPED, STARTING, RUNNING, ERROR, UNAVAILABLE }
 
     /**
      * UI 快照：phase + 虚拟 IPv4 + 已连节点数 + 说明文本，
@@ -78,7 +78,6 @@ class EasyTierManager @Inject constructor(
                 Phase.STOPPED -> "未启动".appendDetail(detail)
                 Phase.STARTING -> "启动中".appendDetail(detail)
                 Phase.RUNNING -> runningSummary()
-                Phase.STOPPING -> "停止中"
                 Phase.ERROR -> "错误".appendDetail(detail)
                 Phase.UNAVAILABLE -> "不可用".appendDetail(detail)
             }
