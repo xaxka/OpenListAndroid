@@ -3,7 +3,6 @@ package com.xaxka.openlist.ui.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -73,7 +72,7 @@ private const val NODES_DISPLAY_LIMIT = 20
  * 设置子页面：内网映射（EasyTier，no-tun 不使用 VPN）。
  * 内容自设置主页面拆分而来；返回键由顶栏按钮与系统回退共同支持（NavHost 栈）。
  *
- * 下半部分为只读「运行状态」区：映射状态（点击进入事件日志页）、本节点信息、网络节点、启动配置。
+ * 下半部分为只读「运行状态」区：映射状态（点击进入详情页：本节点 + 事件日志）、网络节点、启动配置。
  */
 @Composable
 fun EasyTierSettingsScreen(
@@ -169,7 +168,7 @@ fun EasyTierSettingsScreen(
                     subtitle = state.easytierStatus,
                     leading = { SettingsPreferenceIcon(Icons.Outlined.Info) },
                     trailing = { SettingsChevron() },
-                    onTap = { navController.navigate(Routes.SETTINGS_EASYTIER_EVENTS) }
+                    onTap = { navController.navigate(Routes.SETTINGS_EASYTIER_STATUS) }
                 )
 
                 EasyTierStatusSection(detail = state.easytierDetail)
@@ -268,8 +267,8 @@ fun EasyTierSettingsScreen(
 }
 
 /**
- * 只读运行状态区：本节点信息 + 网络节点（路由/对等合并）。
- * 事件日志内容较多，拆到独立页面（点击「映射状态」进入，见 EasyTierEventsScreen）。
+ * 只读运行状态区：网络节点（路由/对等合并）。
+ * 本节点与事件日志内容较多，拆到「映射状态」详情页（见 EasyTierStatusDetailScreen）。
  * 数据均来自 collectNetworkInfos 的最近一次解析快照，随轮询自动刷新。
  */
 @Composable
@@ -277,24 +276,6 @@ private fun EasyTierStatusSection(detail: EasyTierManager.Status) {
     val phase = detail.phase
     if (phase == EasyTierManager.Phase.STOPPED || phase == EasyTierManager.Phase.UNAVAILABLE) {
         return
-    }
-
-    // ---- 本节点 ----
-    detail.myNode?.let { node ->
-        StatusCard("本节点") {
-            StatusKV("主机名", node.hostname)
-            StatusKV("虚拟 IP", node.virtualIpv4.orEmpty())
-            StatusKV("Peer ID", if (node.peerId != 0L) node.peerId.toString() else "")
-            StatusKV("版本", node.version)
-            if (node.listeners.isNotEmpty()) {
-                StatusKV("监听", node.listeners.joinToString("\n"))
-            }
-            node.stun?.let { stun ->
-                if (stun.udpNatType.isNotBlank()) StatusKV("UDP NAT", stun.udpNatType)
-                if (stun.tcpNatType.isNotBlank()) StatusKV("TCP NAT", stun.tcpNatType)
-                if (stun.publicIps.isNotEmpty()) StatusKV("公网 IP", stun.publicIps.joinToString(", "))
-            }
-        }
     }
 
     // ---- 网络节点（路由表为主，对等连接明细并入） ----
@@ -398,26 +379,6 @@ internal fun StatusCard(title: String, content: @Composable () -> Unit) {
         )
         Spacer(Modifier.height(6.dp))
         content()
-    }
-}
-
-/** 只读键值行；value 为空则不渲染。 */
-@Composable
-private fun StatusKV(label: String, value: String) {
-    if (value.isBlank()) return
-    Row(Modifier.padding(vertical = 1.dp)) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(72.dp)
-        )
-        Text(
-            value,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f)
-        )
     }
 }
 

@@ -33,8 +33,8 @@ import androidx.navigation.compose.rememberNavController
 import com.xaxka.openlist.R
 import com.xaxka.openlist.ui.main.HomeScreen
 import com.xaxka.openlist.ui.main.HomeViewModel
-import com.xaxka.openlist.ui.settings.EasyTierEventsScreen
 import com.xaxka.openlist.ui.settings.EasyTierSettingsScreen
+import com.xaxka.openlist.ui.settings.EasyTierStatusDetailScreen
 import com.xaxka.openlist.ui.settings.SettingsScreen
 import com.xaxka.openlist.ui.settings.VideoHashSettingsScreen
 import com.xaxka.openlist.ui.theme.AnimPageFade
@@ -53,8 +53,8 @@ object Routes {
     const val SETTINGS_VIDEOHASH = "settings/videohash"
     const val SETTINGS_EASYTIER = "settings/easytier"
 
-    /** 内网映射的事件日志页（内网映射页点「映射状态」进入，返回回到内网映射页） */
-    const val SETTINGS_EASYTIER_EVENTS = "settings/easytier/events"
+    /** 内网映射「映射状态」详情页：本节点 + 事件日志（点「映射状态」进入，返回回到内网映射页） */
+    const val SETTINGS_EASYTIER_STATUS = "settings/easytier/status"
 }
 
 private data class TabItem(
@@ -160,7 +160,7 @@ fun AppNavHost(
             composable(Routes.SETTINGS) { SettingsScreen(navController = navController) }
             composable(Routes.SETTINGS_VIDEOHASH) { VideoHashSettingsScreen(navController = navController) }
             composable(Routes.SETTINGS_EASYTIER) { EasyTierSettingsScreen(navController = navController) }
-            composable(Routes.SETTINGS_EASYTIER_EVENTS) { EasyTierEventsScreen(navController = navController) }
+            composable(Routes.SETTINGS_EASYTIER_STATUS) { EasyTierStatusDetailScreen(navController = navController) }
         }
     }
 }

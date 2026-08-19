@@ -180,6 +180,10 @@ class EasyTierInfoParserTest {
         assertEquals("udp", conn.tunnelType)
         assertEquals("udp://192.168.1.3:50001", conn.remoteAddr)
         assertEquals(12L, conn.latencyMs)
+        assertEquals(100L, conn.rxBytes)
+        assertEquals(0L, conn.txBytes)
+        assertEquals("", conn.connId)
+        assertFalse(conn.isDirect)
         assertTrue(conn.isClient)
 
         assertEquals(1, info.routes.size)
@@ -198,6 +202,58 @@ class EasyTierInfoParserTest {
         assertFalse(EasyTierInfoParser.containsInstance("""{"other":"some-uuid"}"""))
         assertFalse(EasyTierInfoParser.containsInstance("not-json"))
         assertFalse(EasyTierInfoParser.containsInstance("{}"))
+    }
+
+    @Test
+    fun `directly_connected_conns匹配conn_id判定P2P直连`() {
+        // UUID{part1..4} = 0x11111111 22223333 44445555 55555555 → 与 conn_id 字符串一致
+        val json = networkInfoJson(
+            """
+            {
+              "running": true,
+              "peers": [{
+                "peer_id": 2,
+                "conns": [{
+                  "conn_id": "11111111-2222-3333-4444-555555555555",
+                  "tunnel": {"tunnel_type": "udp"},
+                  "stats": {"latency_us": 8000, "rx_bytes": 2048, "tx_bytes": 1024}
+                }],
+                "directly_connected_conns": [
+                  {"part1": 286331153, "part2": 573676403, "part3": 1147421668, "part4": 1431655765}
+                ]
+              }]
+            }
+            """.trimIndent()
+        )
+        val conn = EasyTierInfoParser.parse(json)!!.peers[0].conns[0]
+        assertTrue(conn.isDirect)
+        assertEquals(2048L, conn.rxBytes)
+        assertEquals(1024L, conn.txBytes)
+    }
+
+    @Test
+    fun `中继连接不误判直连且UUID零值分片省略可还原`() {
+        val json = networkInfoJson(
+            """
+            {
+              "running": true,
+              "peers": [{
+                "peer_id": 2,
+                "conns": [
+                  {"conn_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0000", "tunnel": {"tunnel_type": "tcp"}},
+                  {"conn_id": "00000000-0000-0000-0000-00000000000a", "tunnel": {"tunnel_type": "udp"}}
+                ],
+                "directly_connected_conns": [{"part4": 10}]
+              }]
+            }
+            """.trimIndent()
+        )
+        val conns = EasyTierInfoParser.parse(json)!!.peers[0].conns
+        // 第一条不在直连集合内（中继）；第二条命中仅含 part4 的 UUID（pbjson 省略零值分片）
+        assertFalse(conns[0].isDirect)
+        assertTrue(conns[1].isDirect)
+        assertEquals(0L, conns[0].rxBytes)
+        assertEquals(0L, conns[0].txBytes)
     }
 
     @Test
