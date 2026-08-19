@@ -76,12 +76,6 @@ val LogSubtitle = TextStyle(
     lineHeight = 17.sp, letterSpacing = 0.25.sp,
 )
 
-/** 日志级别徽标文字（级别色 LogRed/LogWarn/LogInfo/LogGreen 由 UI 侧按级别提供） */
-val LogLevelText = TextStyle(
-    fontSize = 11.sp, fontWeight = FontWeight.W500,
-    lineHeight = 16.sp, letterSpacing = 0.5.sp,
-)
-
 /** Snackbar 标题（固定反色白） */
 val SnackBarTitle = TextStyle(
     fontSize = 16.sp, fontWeight = FontWeight.W700,

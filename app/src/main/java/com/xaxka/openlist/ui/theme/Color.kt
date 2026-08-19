@@ -56,22 +56,12 @@ val OpenListSurfaceContainer = Color(0xFFFFFFFF)
 val OpenListSurfaceContainerHigh = Color(0xFFFFFFFF)
 val OpenListSurfaceContainerHighest = Color(0xFFFFFFFF)
 
-// ---------- 语义状态色（仅表达状态，禁止当品牌色用，§2.2） ----------
-val StatusSuccess = Color(0xFF34C759) // 成功
-val StatusWarning = Color(0xFFFF9500) // 警告/待确认
-
-// ---------- 三级文字（§2.3：层级最多三级） ----------
-val TextPrimary = Color(0xFF1A1C1E)
-val TextSecondary = Color(0xFF44474E)
-val TextDisabled = Color(0xFF74777F)
-
 // ---------- 应用内固定色 ----------
 // 日志级别 → 语义色映射（§2.2 状态色映射，替代原纯 RGB 三原色）
 val LogRed = Color(0xFFBA1A1A) // panic / fatal / error → error
 val LogWarn = Color(0xFFFF9500) // warn → warning
 val LogInfo = Color(0xFF5B7CC4) // info → secondary（可读中蓝）
 val LogGreen = Color(0xFF34C759) // debug / trace → success
-val LogDefault = Color(0xFF1A1C1E) // 未知级别回退 → textPrimary
 
 // WebView 进度条（§3.8：surfaceVariant 轨道 + primary 进度）
 val WebProgressTrack = Color(0xFFE6E8EB)

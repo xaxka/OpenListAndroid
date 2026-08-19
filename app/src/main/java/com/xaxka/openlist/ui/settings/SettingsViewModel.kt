@@ -11,7 +11,6 @@ import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
 import com.xaxka.openlist.service.ServerManager
 import com.xaxka.openlist.service.ServerState
-import com.xaxka.openlist.video.VideoHashStore
 import com.xaxka.openlist.video.VideoHashWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -37,7 +36,6 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val prefs: AppPrefsRepository,
-    private val videoHashStore: VideoHashStore,
     private val easyTier: EasyTierManager,
     private val serverManager: ServerManager,
     @ApplicationContext private val appContext: Context
@@ -291,11 +289,6 @@ class SettingsViewModel @Inject constructor(
             VideoHashWorker.enqueue(appContext, VideoHashWorker.MODE_RESTORE, state.videoHashDirs, state.videoHashSuffix)
             snack("已开始还原处理")
         }
-    }
-
-    /** 清除洗码防重复记录表（重置） */
-    fun clearVideoHashRecords() {
-        videoHashStore.clear()
     }
 
     fun snack(

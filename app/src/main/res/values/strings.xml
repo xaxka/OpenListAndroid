@@ -5,10 +5,8 @@
     <!-- 通知（key 已 OpenList 化，值与源项目一致，见 _docs/RENAME_MAP A3-A7） -->
     <string name="openlist_server">OpenList服务器</string>
     <string name="openlist_server_running">OpenList运行中</string>
-    <string name="openlist_config">OpenList配置</string>
     <string name="openlist_starting">OpenList启动中</string>
     <string name="openlist_shut_downing">OpenList关闭中</string>
-    <string name="openlist_provider">OpenList提供者</string>
     <string name="shutdown">关闭</string>
 
     <!-- 快捷方式 -->

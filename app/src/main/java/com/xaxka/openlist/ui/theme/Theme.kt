@@ -1,8 +1,6 @@
 package com.xaxka.openlist.ui.theme
 
-import androidx.compose.animation.core.Ease
 import androidx.compose.animation.core.Easing
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.material3.ColorScheme
@@ -100,23 +98,11 @@ val EaseOutCirc: Easing = Easing { t -> sqrt(1f - (t - 1f) * (t - 1f)) }
 /** 页面转场：150ms 线性淡入，仅进入动画（退出无动画防旧页拦截输入） */
 val AnimPageFade = tween<Float>(durationMillis = 150, easing = LinearEasing)
 
-/** 状态切换 crossfade：300ms（加载→内容、执行中→完成） */
-val AnimCrossfade = tween<Float>(durationMillis = 300, easing = LinearEasing)
-
 /** 主页 FAB 半圈旋转：200ms 线性（每次从 0.5 起） */
 val AnimFabRotate = tween<Float>(durationMillis = 200, easing = LinearEasing)
 
-/** 设置页 Switch 切换：300ms（M3 默认 ease） */
-val AnimSwitchToggle = tween<Float>(durationMillis = 300, easing = Ease)
-
-/** Tab 指示器：250ms FastOutSlowIn（位置 + 宽度双动画） */
-val AnimTabIndicator = tween<Float>(durationMillis = 250, easing = FastOutSlowInEasing)
-
 /** GetSnackBar 进/出：1000ms easeOutCirc */
 val AnimGetSnack = tween<Float>(durationMillis = 1000, easing = EaseOutCirc)
-
-/** 对话框打开：150ms 线性淡入 */
-val AnimDialogOpen = tween<Float>(durationMillis = 150, easing = LinearEasing)
 
 /**
  * 全局主题入口：默认 Blue Light 浅色；darkTheme 切换深色方案，

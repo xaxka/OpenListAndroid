@@ -2,9 +2,6 @@ package com.xaxka.openlist.video
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -40,10 +37,6 @@ class VideoHashStore @Inject constructor(
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val serializer = MapSerializer(String.serializer(), Long.serializer())
 
-    private val _records = MutableStateFlow<Map<String, Long>>(emptyMap())
-    /** 记录表只读快照流（供 UI 查看） */
-    val records: StateFlow<Map<String, Long>> = _records.asStateFlow()
-
     override fun load(): MutableMap<String, Long> {
         return try {
             val json = prefs.getString(KEY_PROCESSED_FILES, "") ?: ""
@@ -61,16 +54,8 @@ class VideoHashStore @Inject constructor(
         try {
             val json = Json.encodeToString(serializer, records)
             prefs.edit().putString(KEY_PROCESSED_FILES, json).apply()
-            // 落盘成功才更新内存流，避免磁盘/内存不一致（load 会回读到旧值）
-            _records.value = records
         } catch (e: Exception) {
             // 序列化失败仅丢本次快照，不影响洗码流程
         }
-    }
-
-    /** 清除全部洗码记录（重置防重复表；不动同一 prefs 内可能新增的其他键） */
-    fun clear() {
-        prefs.edit().remove(KEY_PROCESSED_FILES).apply()
-        _records.value = emptyMap()
     }
 }

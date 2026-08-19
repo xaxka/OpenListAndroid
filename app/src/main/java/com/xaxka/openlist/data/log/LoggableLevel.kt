@@ -15,18 +15,4 @@ enum class LoggableLevel {
             WARN -> "警告"
             ERROR -> "错误"
         }
-
-    companion object {
-        /**
-         * 解析日志级别字符串：支持首字母（D/I/W/E，源 evalLog 格式）与全词（大小写不敏感）。
-         * 无法识别返回 null。
-         */
-        fun fromString(value: String): LoggableLevel? = when (value.uppercase()) {
-            "D", "DEBUG" -> DEBUG
-            "I", "INFO" -> INFO
-            "W", "WARN", "WARNING" -> WARN
-            "E", "ERROR" -> ERROR
-            else -> null
-        }
-    }
 }

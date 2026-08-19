@@ -10,7 +10,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -22,27 +21,6 @@ import javax.inject.Singleton
 
 // DataStore 单例（文件名 openlist_prefs，RENAME_MAP B27）
 private val Context.openlistPrefs by preferencesDataStore(name = "openlist_prefs")
-
-/** 应用偏好快照（一次性读取全部键） */
-data class AppPrefs(
-    val silentJumpApp: Boolean = false,
-    val keepWakeLock: Boolean = false,
-    val autostartOnBoot: Boolean = false,
-    val autoOpenWeb: Boolean = false,
-    val noMemoryCache: Boolean = true,
-    val darkMode: Boolean = false,
-    val dynamicColor: Boolean = false,
-    val dataDir: String = "",
-    val videoHashSuffix: String = "HashMod",
-    val videoHashDirs: List<String> = emptyList(),
-    val videoHashRunning: Boolean = false,
-    val videoHashStatus: String = "",
-    val easytierEnabled: Boolean = false,
-    val easytierNetwork: String = "",
-    val easytierNetworkSecret: String = "",
-    val easytierPeerUri: String = "",
-    val easytierQuicProxy: Boolean = true,
-)
 
 /**
  * 应用配置仓储：DataStore Preferences。
@@ -139,32 +117,6 @@ class AppPrefsRepository @Inject constructor(
 
     /** EasyTier QUIC 代理（enable_quic_proxy；把 TCP 流转为 QUIC 传输），默认开启 */
     val easytierQuicProxy: Flow<Boolean> = data.map { it[Keys.EASYTIER_QUIC_PROXY] ?: true }
-
-    // ---------- 快照 ----------
-
-    /** 一次性读取全部偏好 */
-    suspend fun snapshot(): AppPrefs {
-        val prefs = data.first()
-        return AppPrefs(
-            silentJumpApp = prefs[Keys.SILENT_JUMP_APP] ?: false,
-            keepWakeLock = prefs[Keys.KEEP_WAKE_LOCK] ?: false,
-            autostartOnBoot = prefs[Keys.START_AT_BOOT] ?: false,
-            autoOpenWeb = prefs[Keys.AUTO_OPEN_WEB_PAGE] ?: false,
-            noMemoryCache = prefs[Keys.NO_MEMORY_CACHE] ?: true,
-            darkMode = prefs[Keys.DARK_MODE] ?: false,
-            dynamicColor = prefs[Keys.DYNAMIC_COLOR] ?: false,
-            dataDir = (prefs[Keys.DATA_DIR] ?: defaultDataDir).ifBlank { defaultDataDir },
-            videoHashSuffix = prefs[Keys.VIDEO_HASH_SUFFIX] ?: "HashMod",
-            videoHashDirs = decodeDirs(prefs[Keys.VIDEO_HASH_DIRS] ?: ""),
-            videoHashRunning = prefs[Keys.VIDEO_HASH_RUNNING] ?: false,
-            videoHashStatus = prefs[Keys.VIDEO_HASH_STATUS] ?: "",
-            easytierEnabled = prefs[Keys.EASYTIER_ENABLED] ?: false,
-            easytierNetwork = prefs[Keys.EASYTIER_NETWORK] ?: "",
-            easytierNetworkSecret = prefs[Keys.EASYTIER_NETWORK_SECRET] ?: "",
-            easytierPeerUri = prefs[Keys.EASYTIER_PEER_URI] ?: "",
-            easytierQuicProxy = prefs[Keys.EASYTIER_QUIC_PROXY] ?: true,
-        )
-    }
 
     // ---------- 写入 ----------
 
