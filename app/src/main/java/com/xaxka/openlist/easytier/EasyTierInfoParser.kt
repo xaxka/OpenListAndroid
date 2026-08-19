@@ -22,7 +22,7 @@ import kotlinx.serialization.json.longOrNull
  * @param routes 虚拟网络路由表（到各节点的路径/跳数/延迟）
  * @param events 实例事件日志（核心侧文本，按发生顺序）
  */
-internal data class InstanceInfo(
+data class InstanceInfo(
     val running: Boolean,
     val ipv4: String?,
     val ipv4Addr: Long?,
@@ -35,7 +35,7 @@ internal data class InstanceInfo(
 )
 
 /** 本节点信息（MyNodeInfo）。 */
-internal data class MyNodeInfo(
+data class MyNodeInfo(
     val peerId: Long,
     val hostname: String,
     val version: String,
@@ -45,20 +45,20 @@ internal data class MyNodeInfo(
 )
 
 /** STUN / NAT 探测摘要。 */
-internal data class StunInfo(
+data class StunInfo(
     val udpNatType: String,
     val tcpNatType: String,
     val publicIps: List<String>,
 )
 
 /** 单个对等节点及其连接明细。 */
-internal data class PeerDetail(
+data class PeerDetail(
     val peerId: Long,
     val conns: List<PeerConn>,
 )
 
 /** 对等节点的一条连接（隧道）信息。 */
-internal data class PeerConn(
+data class PeerConn(
     val tunnelType: String,
     val remoteAddr: String?,
     val lossRate: Float,
@@ -67,7 +67,7 @@ internal data class PeerConn(
 )
 
 /** 虚拟网络路由表条目（到某一节点）。 */
-internal data class RouteDetail(
+data class RouteDetail(
     val peerId: Long,
     val ipv4: String?,
     val hostname: String,
