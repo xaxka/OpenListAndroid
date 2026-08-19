@@ -83,7 +83,7 @@ jobs:
         id: setup-ndk-rust
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: 26.0.10792818
+          ndk-version: r26
 
       - name: Cache cargo-ndk binary
         if: steps.jni-cache.outputs.cache-hit != 'true'
