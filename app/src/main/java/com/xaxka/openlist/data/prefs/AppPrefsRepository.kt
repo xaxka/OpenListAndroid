@@ -41,6 +41,7 @@ data class AppPrefs(
     val easytierNetwork: String = "",
     val easytierNetworkSecret: String = "",
     val easytierPeerUri: String = "",
+    val easytierPorts: String = "5244",
 )
 
 /**
@@ -68,6 +69,7 @@ class AppPrefsRepository @Inject constructor(
         val EASYTIER_NETWORK = stringPreferencesKey("easyTierNetwork")
         val EASYTIER_NETWORK_SECRET = stringPreferencesKey("easyTierNetworkSecret")
         val EASYTIER_PEER_URI = stringPreferencesKey("easyTierPeerUri")
+        val EASYTIER_PORTS = stringPreferencesKey("easyTierPorts")
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -135,6 +137,12 @@ class AppPrefsRepository @Inject constructor(
     /** EasyTier 对等节点 URI（空白则不配置 peer） */
     val easytierPeerUri: Flow<String> = data.map { it[Keys.EASYTIER_PEER_URI] ?: "" }
 
+    /** EasyTier 映射端口列表（逗号分隔，如 "5244" 或 "5244,8080"；每个端口映射到本机同端口） */
+    val easytierPorts: Flow<String> = data.map { it[Keys.EASYTIER_PORTS] ?: "5244" }
+
+    /** EasyTier 映射端口列表（逗号分隔，如 "5244" 或 "5244,8080"；每个端口映射到本机同端口） */
+    val easytierPorts: Flow<String> = data.map { it[Keys.EASYTIER_PORTS] ?: "5244" }
+
     // ---------- 快照 ----------
 
     /** 一次性读取全部偏好 */
@@ -157,6 +165,7 @@ class AppPrefsRepository @Inject constructor(
             easytierNetwork = prefs[Keys.EASYTIER_NETWORK] ?: "",
             easytierNetworkSecret = prefs[Keys.EASYTIER_NETWORK_SECRET] ?: "",
             easytierPeerUri = prefs[Keys.EASYTIER_PEER_URI] ?: "",
+            easytierPorts = prefs[Keys.EASYTIER_PORTS] ?: "5244",
         )
     }
 
@@ -196,6 +205,8 @@ class AppPrefsRepository @Inject constructor(
     suspend fun setEasytierNetworkSecret(value: String) = edit { it[Keys.EASYTIER_NETWORK_SECRET] = value }
 
     suspend fun setEasytierPeerUri(value: String) = edit { it[Keys.EASYTIER_PEER_URI] = value }
+
+    suspend fun setEasytierPorts(value: String) = edit { it[Keys.EASYTIER_PORTS] = value }
 
     // ---------- 内部 ----------
 

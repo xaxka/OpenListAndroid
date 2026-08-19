@@ -74,6 +74,7 @@ class SettingsViewModel @Inject constructor(
         val easytierNetwork: String = "",
         val easytierNetworkSecret: String = "",
         val easytierPeerUri: String = "",
+        val easytierPorts: String = "5244",
         val easytierStatus: String = ""
     )
 
@@ -108,6 +109,7 @@ class SettingsViewModel @Inject constructor(
         prefs.easytierNetwork,
         prefs.easytierNetworkSecret,
         prefs.easytierPeerUri,
+        prefs.easytierPorts,
         easyTier.state
     ) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -129,7 +131,8 @@ class SettingsViewModel @Inject constructor(
             easytierNetwork = values[14] as String,
             easytierNetworkSecret = values[15] as String,
             easytierPeerUri = values[16] as String,
-            easytierStatus = (values[17] as EasyTierManager.Status).summary
+            easytierPorts = values[17] as String,
+            easytierStatus = (values[18] as EasyTierManager.Status).summary
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -218,6 +221,14 @@ class SettingsViewModel @Inject constructor(
     fun setEasytierNetworkSecret(value: String) = setEasytierText(prefs::setEasytierNetworkSecret, value, "网络密钥")
 
     fun setEasytierPeerUri(value: String) = setEasytierText(prefs::setEasytierPeerUri, value, "对等节点")
+
+    /** 映射端口列表：运行中实例会在下一轮轮询（数秒内）自动增删端口转发，无需重启。 */
+    fun setEasytierPorts(value: String) {
+        viewModelScope.launch {
+            prefs.setEasytierPorts(value)
+            snack("端口列表已保存，映射将自动更新")
+        }
+    }
 
     private fun setEasytierText(setter: suspend (String) -> Unit, value: String, label: String) {
         viewModelScope.launch {

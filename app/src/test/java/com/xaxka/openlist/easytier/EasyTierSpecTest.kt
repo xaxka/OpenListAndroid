@@ -1,7 +1,6 @@
 package com.xaxka.openlist.easytier
 
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -14,7 +13,8 @@ import org.junit.Test
 /**
  * EasyTier 模板与 RPC 载荷单测：
  * TOML（固定字段/可配置字段/空值回退/转义、启动配置不带端口转发）
- * PatchConfig 载荷（ADD/REMOVE、实例选择器、SocketAddr 编码）
+ * PatchConfig 载荷（多端口 ADD/REMOVE、实例选择器、SocketAddr 编码）
+ * 端口列表解析（去重/排序/越界过滤/多分隔符）
  */
 class EasyTierSpecTest {
 
@@ -90,9 +90,26 @@ class EasyTierSpecTest {
     }
 
     @Test
-    fun `端口转发补丁载荷包含ADD规则与实例选择器`() {
+    fun `端口解析去重排序并过滤越界`() {
+        assertEquals(listOf(80, 5244, 8080), EasyTierSpec.parsePorts("8080, 5244, 80, 5244"))
+        assertEquals(listOf(5244, 8080), EasyTierSpec.parsePorts("5244，8080")) // 中文逗号
+        assertEquals(listOf(5244), EasyTierSpec.parsePorts("0, 70000, abc, 5244")) // 越界/非法被过滤
+        assertEquals(emptyList<Int>(), EasyTierSpec.parsePorts(""))
+        assertEquals(emptyList<Int>(), EasyTierSpec.parsePorts("abc def"))
+    }
+
+    @Test
+    fun `端口格式化以逗号空格连接`() {
+        assertEquals("5244, 8080", EasyTierSpec.formatPorts(listOf(5244, 8080)))
+    }
+
+    @Test
+    fun `单端口补丁载荷包含ADD规则与实例选择器`() {
         val payload = json.parseToJsonElement(
-            EasyTierSpec.buildPortForwardPatchJson(removeAddr = null, addAddr = 0x0A909002L)
+            EasyTierSpec.buildPortForwardPatchJson(
+                removeAddr = 0L, removePorts = emptyList(),
+                addAddr = 0x0A909002L, addPorts = listOf(5244)
+            )
         ).jsonObject
 
         // 实例选择器按名称定位
@@ -118,9 +135,29 @@ class EasyTierSpecTest {
     }
 
     @Test
+    fun `多端口各生成一条ADD规则`() {
+        val payload = json.parseToJsonElement(
+            EasyTierSpec.buildPortForwardPatchJson(
+                removeAddr = 0L, removePorts = emptyList(),
+                addAddr = 0x0A909002L, addPorts = listOf(5244, 8080, 8443)
+            )
+        ).jsonObject
+
+        val forwards = payload["patch"]!!.jsonObject["port_forwards"]!!.jsonArray
+        assertEquals(3, forwards.size)
+        val ports = forwards.map {
+            it.jsonObject["cfg"]!!.jsonObject["bind_addr"]!!.jsonObject["port"]!!.jsonPrimitive.long
+        }
+        assertEquals(listOf(5244L, 8080L, 8443L), ports)
+    }
+
+    @Test
     fun `IP变化时补丁先REMOVE旧绑定再ADD新绑定`() {
         val payload = json.parseToJsonElement(
-            EasyTierSpec.buildPortForwardPatchJson(removeAddr = 0x0A909009L, addAddr = 0x0A909002L)
+            EasyTierSpec.buildPortForwardPatchJson(
+                removeAddr = 0x0A909009L, removePorts = listOf(5244),
+                addAddr = 0x0A909002L, addPorts = listOf(5244)
+            )
         ).jsonObject
 
         val forwards = payload["patch"]!!.jsonObject["port_forwards"]!!.jsonArray

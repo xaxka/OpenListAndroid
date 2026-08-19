@@ -10,13 +10,12 @@ import kotlinx.serialization.json.putJsonObject
 /**
  * EasyTier 实例固定规格 + TOML 配置模板 + 端口转发 RPC 载荷。
  *
- * 目标：把本机 OpenList 的 5244 端口映射进 EasyTier 虚拟局域网（no-tun 模式，不使用
- * Android VPN 服务）。
+ * 目标：把本机若干端口映射进 EasyTier 虚拟局域网（no-tun 模式，不使用 Android VPN 服务）。
  *
  * 端口转发采用「动态绑定」策略：启动 TOML 不携带 [[port_forward]]（因为 ipv4=DHCP，
  * 启动瞬间虚拟 IP 尚未分配，写死 bind_addr 会绑定失败）；实例连上网络并拿到 DHCP
  * 分配的虚拟 IP 后，通过 ConfigRpc.PatchConfig 动态添加转发规则：
- * <虚拟IP>:5244 -> 127.0.0.1:5244(tcp)。
+ * <虚拟IP>:<端口> -> 127.0.0.1:<同端口>(tcp)，支持多端口同时映射。
  *
  * TOML 字段对照 easytier-core/src/config/toml.rs（Config 结构）：
  * - 顶层 instance_name / hostname / dhcp
@@ -36,8 +35,11 @@ object EasyTierSpec {
     /** no-tun：不创建 TUN 设备、不使用 VpnService，端口转发走核心内部的代理通道。 */
     const val NO_TUN = true
 
-    /** 对外映射端口与目标（本机 OpenList 回环地址）。 */
-    const val PORT = 5244
+    /** 默认映射端口（OpenList）；端口列表为空时回退仅映射它。 */
+    const val PRIMARY_PORT = 5244
+    const val DEFAULT_PORTS = "5244"
+
+    /** 转发目标：本机回环地址（OpenList 及同机服务）。 */
     const val LOOPBACK_ADDR = 2130706433L /* 127.0.0.1 */
 
     /** 网络名为空时回退 EasyTier 默认网络。 */
@@ -46,6 +48,20 @@ object EasyTierSpec {
     /** PatchConfig RPC 坐标（easytier-core instance_rpc 分发名与方法名）。 */
     const val CONFIG_RPC_SERVICE = "api.config.ConfigRpcService"
     const val PATCH_CONFIG_METHOD = "PatchConfig"
+
+    /**
+     * 解析端口列表文本：支持中英文逗号 / 分号 / 空白 / 换行分隔；
+     * 自动过滤非数字、越界（1..65535）值，去重并升序排列。
+     */
+    fun parsePorts(raw: String): List<Int> =
+        raw.split(',', '\uFF0C', ';', ' ', '\n', '\t')
+            .mapNotNull { it.trim().toIntOrNull() }
+            .filter { it in 1..65535 }
+            .distinct()
+            .sorted()
+
+    /** 显示用：端口列表 → "5244, 8080"。 */
+    fun formatPorts(ports: List<Int>): String = ports.joinToString(", ")
 
     /**
      * 生成启动 TOML（不含端口转发，转发在拿到 DHCP 虚拟 IP 后经 RPC 追加）。
@@ -77,14 +93,18 @@ object EasyTierSpec {
     }
 
     /**
-     * 生成 ConfigRpc.PatchConfig 的 proto3 JSON 载荷：
-     * ADD <addAddr>:5244 -> 127.0.0.1:5244(tcp)；若 [removeAddr] 非空则先 REMOVE 旧规则
-     * （虚拟 IP 变化时替换绑定）。
+     * 生成 ConfigRpc.PatchConfig 的 proto3 JSON 载荷（多端口增量更新）。
      *
-     * @param removeAddr 需要移除的旧绑定地址（uint32 大端），null 表示不移除
-     * @param addAddr 新绑定地址（DHCP 分到的虚拟 IP，uint32 大端）
+     * - [removeAddr]/[removePorts]：需要移除的旧绑定（虚拟 IP 变化或端口删除时传入；
+     *   removePorts 为空则不生成 REMOVE 条目）。
+     * - [addAddr]/[addPorts]：新增绑定 <addAddr>:<端口> -> 127.0.0.1:<同端口>(tcp)。
      */
-    fun buildPortForwardPatchJson(removeAddr: Long?, addAddr: Long): String {
+    fun buildPortForwardPatchJson(
+        removeAddr: Long,
+        removePorts: List<Int>,
+        addAddr: Long,
+        addPorts: List<Int>,
+    ): String {
         val payload = buildJsonObject {
             putJsonObject("instance") {
                 putJsonObject("instance_selector") {
@@ -93,10 +113,12 @@ object EasyTierSpec {
             }
             putJsonObject("patch") {
                 putJsonArray("port_forwards") {
-                    if (removeAddr != null) {
-                        add(portForwardPatch(action = "REMOVE", bindAddr = removeAddr))
+                    removePorts.forEach { port ->
+                        add(portForwardPatch(action = "REMOVE", bindAddr = removeAddr, port = port))
                     }
-                    add(portForwardPatch(action = "ADD", bindAddr = addAddr))
+                    addPorts.forEach { port ->
+                        add(portForwardPatch(action = "ADD", bindAddr = addAddr, port = port))
+                    }
                 }
             }
         }
@@ -104,17 +126,17 @@ object EasyTierSpec {
     }
 
     /** 单条 PortForwardPatch：action + cfg(SocketAddr×2 + SocketType)。 */
-    private fun portForwardPatch(action: String, bindAddr: Long): JsonObject =
+    private fun portForwardPatch(action: String, bindAddr: Long, port: Int): JsonObject =
         buildJsonObject {
             put("action", action)
             putJsonObject("cfg") {
                 putJsonObject("bind_addr") {
                     putJsonObject("ipv4") { put("addr", bindAddr) }
-                    put("port", PORT)
+                    put("port", port)
                 }
                 putJsonObject("dst_addr") {
                     putJsonObject("ipv4") { put("addr", LOOPBACK_ADDR) }
-                    put("port", PORT)
+                    put("port", port)
                 }
                 put("socket_type", "TCP")
             }

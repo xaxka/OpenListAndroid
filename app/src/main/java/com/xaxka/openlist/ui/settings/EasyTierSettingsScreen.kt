@@ -13,6 +13,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Numbers
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
@@ -60,6 +61,7 @@ fun EasyTierSettingsScreen(
     var showNetworkDialog by remember { mutableStateOf(false) }
     var showSecretDialog by remember { mutableStateOf(false) }
     var showPeerDialog by remember { mutableStateOf(false) }
+    var showPortsDialog by remember { mutableStateOf(false) }
 
     // Snackbar 事件：与设置主页面相同的 GetSnackBar 复刻
     LaunchedEffect(viewModel) {
@@ -96,7 +98,7 @@ fun EasyTierSettingsScreen(
             ) {
                 SettingsSwitchPreference(
                     title = "启用内网映射",
-                    subtitle = "随服务启停；no-tun 模式（不使用 VPN），把本机 5244 端口映射进 EasyTier 虚拟网络",
+                    subtitle = "随服务启停；no-tun 模式（不使用 VPN），把本机配置的端口映射进 EasyTier 虚拟网络",
                     icon = Icons.Outlined.Lan,
                     value = state.easytierEnabled,
                     onCheckedChange = viewModel::setEasytierEnabled
@@ -118,6 +120,12 @@ fun EasyTierSettingsScreen(
                     subtitle = state.easytierPeerUri.ifBlank { "（留空不配置 peer）" },
                     leading = { SettingsPreferenceIcon(Icons.Outlined.Link) },
                     onTap = { showPeerDialog = true }
+                )
+                SettingsBasicPreference(
+                    title = "映射端口",
+                    subtitle = state.easytierPorts.ifBlank { "5244" } + "（逗号分隔可填多个，均映射到本机同端口）",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.Numbers) },
+                    onTap = { showPortsDialog = true }
                 )
                 SettingsBasicPreference(
                     title = "映射状态",
@@ -167,6 +175,18 @@ fun EasyTierSettingsScreen(
             onConfirm = {
                 viewModel.setEasytierPeerUri(it.trim())
                 showPeerDialog = false
+            }
+        )
+    }
+    if (showPortsDialog) {
+        EasyTierTextDialog(
+            title = "映射端口",
+            initial = state.easytierPorts,
+            placeholder = "如 5244 或 5244, 8080（逗号分隔，1-65535）",
+            onDismiss = { showPortsDialog = false },
+            onConfirm = {
+                viewModel.setEasytierPorts(it.trim())
+                showPortsDialog = false
             }
         )
     }
