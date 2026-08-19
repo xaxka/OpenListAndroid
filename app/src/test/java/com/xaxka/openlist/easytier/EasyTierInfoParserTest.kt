@@ -256,29 +256,4 @@ class EasyTierInfoParserTest {
         assertEquals(0L, conns[0].txBytes)
     }
 
-    @Test
-    fun `端口转发对账仅统计绑定虚拟IP且指向回环同端口的规则`() {
-        val virtualIp = 0x0A909002L // 10.144.144.2
-        val loopback = EasyTierSpec.LOOPBACK_ADDR // 127.0.0.1
-        val json = """
-            {"cfgs":[
-              {"bind_addr":{"ipv4":{"addr":$virtualIp},"port":5244},
-               "dst_addr":{"ipv4":{"addr":$loopback},"port":5244},"socket_type":"TCP"},
-              {"bind_addr":{"ipv4":{"addr":$virtualIp},"port":8080},
-               "dst_addr":{"ipv4":{"addr":$loopback},"port":8080},"socket_type":"TCP"},
-              {"bind_addr":{"ipv4":{"addr":$virtualIp},"port":9000},
-               "dst_addr":{"ipv4":{"addr":$loopback},"port":9001},"socket_type":"TCP"},
-              {"bind_addr":{"ipv4":{"addr":1886734345},"port":5244},
-               "dst_addr":{"ipv4":{"addr":$loopback},"port":5244},"socket_type":"TCP"}
-            ]}
-        """.trimIndent()
-        // 第 3 条 bind/dst 端口不一致、第 4 条绑定在其他 IP，均不计入
-        assertEquals(listOf(5244, 8080), EasyTierInfoParser.parseForwardedPorts(json, virtualIp))
-    }
-
-    @Test
-    fun `端口转发空列表与非法JSON`() {
-        assertEquals(emptyList<Int>(), EasyTierInfoParser.parseForwardedPorts("""{"cfgs":[]}""", 1L))
-        assertNull(EasyTierInfoParser.parseForwardedPorts("not-json", 1L))
-    }
 }

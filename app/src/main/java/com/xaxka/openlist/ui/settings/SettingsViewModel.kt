@@ -74,7 +74,6 @@ class SettingsViewModel @Inject constructor(
         val easytierNetwork: String = "",
         val easytierNetworkSecret: String = "",
         val easytierPeerUri: String = "",
-        val easytierPorts: String = "5244",
         val easytierQuicProxy: Boolean = true,
         val easytierStatus: String = "",
         val easytierDetail: EasyTierManager.Status = EasyTierManager.Status()
@@ -111,7 +110,6 @@ class SettingsViewModel @Inject constructor(
         prefs.easytierNetwork,
         prefs.easytierNetworkSecret,
         prefs.easytierPeerUri,
-        prefs.easytierPorts,
         prefs.easytierQuicProxy,
         easyTier.state
     ) { values ->
@@ -134,10 +132,9 @@ class SettingsViewModel @Inject constructor(
             easytierNetwork = values[14] as String,
             easytierNetworkSecret = values[15] as String,
             easytierPeerUri = values[16] as String,
-            easytierPorts = values[17] as String,
-            easytierQuicProxy = values[18] as Boolean,
-            easytierStatus = (values[19] as EasyTierManager.Status).summary,
-            easytierDetail = values[19] as EasyTierManager.Status
+            easytierQuicProxy = values[17] as Boolean,
+            easytierStatus = (values[18] as EasyTierManager.Status).summary,
+            easytierDetail = values[18] as EasyTierManager.Status
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -226,14 +223,6 @@ class SettingsViewModel @Inject constructor(
     fun setEasytierNetworkSecret(value: String) = setEasytierText(prefs::setEasytierNetworkSecret, value, "网络密钥")
 
     fun setEasytierPeerUri(value: String) = setEasytierText(prefs::setEasytierPeerUri, value, "对等节点")
-
-    /** 映射端口列表：运行中实例会在下一轮轮询（数秒内）自动增删端口转发，无需重启。 */
-    fun setEasytierPorts(value: String) {
-        viewModelScope.launch {
-            prefs.setEasytierPorts(value)
-            snack("端口列表已保存，映射将自动更新")
-        }
-    }
 
     /** QUIC 代理（enable_quic_proxy）：写入启动 TOML，属启动期配置，需重启实例生效。 */
     fun setEasytierQuicProxy(value: Boolean) {

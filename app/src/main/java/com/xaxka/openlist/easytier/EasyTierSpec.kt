@@ -1,21 +1,13 @@
 package com.xaxka.openlist.easytier
 
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
-
 /**
- * EasyTier 实例固定规格 + TOML 配置模板 + 端口转发 RPC 载荷。
+ * EasyTier 实例固定规格 + TOML 配置模板。
  *
- * 目标：把本机若干端口映射进 EasyTier 虚拟局域网（no-tun 模式，不使用 Android VPN 服务）。
+ * 目标：把本机服务暴露给 EasyTier 虚拟局域网（no-tun 模式，不使用 Android VPN 服务）。
  *
- * 端口转发采用「动态绑定」策略：启动 TOML 不携带 [[port_forward]]（因为 ipv4=DHCP，
- * 启动瞬间虚拟 IP 尚未分配，写死 bind_addr 会绑定失败）；实例连上网络并拿到 DHCP
- * 分配的虚拟 IP 后，通过 ConfigRpc.PatchConfig 动态添加转发规则：
- * <虚拟IP>:<端口> -> 127.0.0.1:<同端口>(tcp)，支持多端口同时映射。
+ * 无需下发端口转发规则：no-tun 模式下 EasyTier 核心的代理引擎会把组网设备发往本机
+ * 虚拟 IP 的 TCP/UDP/ICMP 包自动落到本机回环同端口（如 <虚拟IP>:5244 直达 OpenList），
+ * 启动 TOML 不携带 [[port_forward]]。
  *
  * TOML 字段对照 easytier-core/src/config/toml.rs（Config 结构）：
  * - 顶层 instance_name / hostname / dhcp
@@ -32,46 +24,17 @@ object EasyTierSpec {
     /** 通过 DHCP 向 EasyTier 网络申请虚拟 IPv4（不写静态 ipv4）。 */
     const val DHCP = true
 
-    /** no-tun：不创建 TUN 设备、不使用 VpnService，端口转发走核心内部的代理通道。 */
+    /** no-tun：不创建 TUN 设备、不使用 VpnService，发往虚拟 IP 的流量经核心代理直达本机回环。 */
     const val NO_TUN = true
-
-    /** 默认映射端口（OpenList）；端口列表为空时回退仅映射它。 */
-    const val PRIMARY_PORT = 5244
-    const val DEFAULT_PORTS = "5244"
-
-    /** 转发目标：本机回环地址（OpenList 及同机服务）。 */
-    const val LOOPBACK_ADDR = 2130706433L /* 127.0.0.1 */
 
     /** 网络名为空时回退 EasyTier 默认网络。 */
     const val DEFAULT_NETWORK_NAME = "default"
-
-    /** PatchConfig RPC 坐标（easytier-core instance_rpc 分发名与方法名）。 */
-    const val CONFIG_RPC_SERVICE = "api.config.ConfigRpcService"
-    const val PATCH_CONFIG_METHOD = "PatchConfig"
-
-    /** ListPortForward RPC 坐标：读取实例当前实际生效的端口转发规则（对账用）。 */
-    const val PORT_FORWARD_RPC_SERVICE = "api.instance.PortForwardManageRpcService"
-    const val LIST_PORT_FORWARD_METHOD = "ListPortForward"
 
     /** 密钥脱敏占位（启动配置展示用）。 */
     private const val SECRET_MASKED = "********"
 
     /**
-     * 解析端口列表文本：支持中英文逗号 / 分号 / 空白 / 换行分隔；
-     * 自动过滤非数字、越界（1..65535）值，去重并升序排列。
-     */
-    fun parsePorts(raw: String): List<Int> =
-        raw.split(',', '\uFF0C', ';', ' ', '\n', '\t')
-            .mapNotNull { it.trim().toIntOrNull() }
-            .filter { it in 1..65535 }
-            .distinct()
-            .sorted()
-
-    /** 显示用：端口列表 → "5244, 8080"。 */
-    fun formatPorts(ports: List<Int>): String = ports.joinToString(", ")
-
-    /**
-     * 生成启动 TOML（不含端口转发，转发在拿到 DHCP 虚拟 IP 后经 RPC 追加）。
+     * 生成启动 TOML。
      *
      * @param networkName 网络名称（空白回退 "default"）
      * @param networkSecret 网络密钥（允许空字符串）
@@ -123,69 +86,6 @@ object EasyTierSpec {
         val maskedSecret = if (networkSecret.isBlank()) networkSecret else SECRET_MASKED
         return buildToml(networkName, maskedSecret, peerUri, enableQuicProxy)
     }
-
-    /**
-     * 生成 ConfigRpc.PatchConfig 的 proto3 JSON 载荷（多端口增量更新）。
-     *
-     * - [removeAddr]/[removePorts]：需要移除的旧绑定（虚拟 IP 变化或端口删除时传入；
-     *   removePorts 为空则不生成 REMOVE 条目）。
-     * - [addAddr]/[addPorts]：新增绑定 <addAddr>:<端口> -> 127.0.0.1:<同端口>(tcp)。
-     */
-    fun buildPortForwardPatchJson(
-        removeAddr: Long,
-        removePorts: List<Int>,
-        addAddr: Long,
-        addPorts: List<Int>,
-    ): String {
-        val payload = buildJsonObject {
-            putJsonObject("instance") {
-                putJsonObject("instance_selector") {
-                    put("name", INSTANCE_NAME)
-                }
-            }
-            putJsonObject("patch") {
-                putJsonArray("port_forwards") {
-                    removePorts.forEach { port ->
-                        add(portForwardPatch(action = "REMOVE", bindAddr = removeAddr, port = port))
-                    }
-                    addPorts.forEach { port ->
-                        add(portForwardPatch(action = "ADD", bindAddr = addAddr, port = port))
-                    }
-                }
-            }
-        }
-        return payload.toString()
-    }
-
-    /** 单条 PortForwardPatch：action + cfg(SocketAddr×2 + SocketType)。 */
-    private fun portForwardPatch(action: String, bindAddr: Long, port: Int): JsonObject =
-        buildJsonObject {
-            put("action", action)
-            putJsonObject("cfg") {
-                putJsonObject("bind_addr") {
-                    putJsonObject("ipv4") { put("addr", bindAddr) }
-                    put("port", port)
-                }
-                putJsonObject("dst_addr") {
-                    putJsonObject("ipv4") { put("addr", LOOPBACK_ADDR) }
-                    put("port", port)
-                }
-                put("socket_type", "TCP")
-            }
-        }
-
-    /**
-     * 仅含实例选择器的最小载荷，供 ListPortForward 这类只读 RPC 使用：
-     * `{"instance":{"instance_selector":{"name":"openlist"}}}`。
-     */
-    fun buildInstanceSelectorJson(): String =
-        buildJsonObject {
-            putJsonObject("instance") {
-                putJsonObject("instance_selector") {
-                    put("name", INSTANCE_NAME)
-                }
-            }
-        }.toString()
 
     /** Ipv4Addr.addr（uint32 大端）→ 点分十进制。 */
     fun formatIpv4(addr: Long): String {

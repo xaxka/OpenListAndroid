@@ -41,7 +41,6 @@ data class AppPrefs(
     val easytierNetwork: String = "",
     val easytierNetworkSecret: String = "",
     val easytierPeerUri: String = "",
-    val easytierPorts: String = "5244",
     val easytierQuicProxy: Boolean = true,
 )
 
@@ -70,7 +69,6 @@ class AppPrefsRepository @Inject constructor(
         val EASYTIER_NETWORK = stringPreferencesKey("easyTierNetwork")
         val EASYTIER_NETWORK_SECRET = stringPreferencesKey("easyTierNetworkSecret")
         val EASYTIER_PEER_URI = stringPreferencesKey("easyTierPeerUri")
-        val EASYTIER_PORTS = stringPreferencesKey("easyTierPorts")
         val EASYTIER_QUIC_PROXY = booleanPreferencesKey("easyTierQuicProxy")
     }
 
@@ -139,9 +137,6 @@ class AppPrefsRepository @Inject constructor(
     /** EasyTier 对等节点 URI（空白则不配置 peer） */
     val easytierPeerUri: Flow<String> = data.map { it[Keys.EASYTIER_PEER_URI] ?: "" }
 
-    /** EasyTier 映射端口列表（逗号分隔，如 "5244" 或 "5244,8080"；每个端口映射到本机同端口） */
-    val easytierPorts: Flow<String> = data.map { it[Keys.EASYTIER_PORTS] ?: "5244" }
-
     /** EasyTier QUIC 代理（enable_quic_proxy；把 TCP 流转为 QUIC 传输），默认开启 */
     val easytierQuicProxy: Flow<Boolean> = data.map { it[Keys.EASYTIER_QUIC_PROXY] ?: true }
 
@@ -167,7 +162,6 @@ class AppPrefsRepository @Inject constructor(
             easytierNetwork = prefs[Keys.EASYTIER_NETWORK] ?: "",
             easytierNetworkSecret = prefs[Keys.EASYTIER_NETWORK_SECRET] ?: "",
             easytierPeerUri = prefs[Keys.EASYTIER_PEER_URI] ?: "",
-            easytierPorts = prefs[Keys.EASYTIER_PORTS] ?: "5244",
             easytierQuicProxy = prefs[Keys.EASYTIER_QUIC_PROXY] ?: true,
         )
     }
@@ -208,8 +202,6 @@ class AppPrefsRepository @Inject constructor(
     suspend fun setEasytierNetworkSecret(value: String) = edit { it[Keys.EASYTIER_NETWORK_SECRET] = value }
 
     suspend fun setEasytierPeerUri(value: String) = edit { it[Keys.EASYTIER_PEER_URI] = value }
-
-    suspend fun setEasytierPorts(value: String) = edit { it[Keys.EASYTIER_PORTS] = value }
 
     suspend fun setEasytierQuicProxy(value: Boolean) = edit { it[Keys.EASYTIER_QUIC_PROXY] = value }
 

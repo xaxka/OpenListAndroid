@@ -147,37 +147,6 @@ internal object EasyTierInfoParser {
         )
     }
 
-    /**
-     * 解析 ListPortForward 响应（PortForwardManageRpcService.ListPortForward）：
-     * `{"cfgs":[{bind_addr,dst_addr,socket_type}]}` → 绑定的端口列表。
-     *
-     * 仅保留「绑定在指定虚拟 IP、且转发到回环同端口」的规则（即本组件下发的规则），
-     * 避免把用户/核心侧的其他转发计入对账。解析失败返回 null（调用方按读取失败处理）。
-     */
-    fun parseForwardedPorts(
-        jsonText: String,
-        bindAddr: Long,
-        loopback: Long = EasyTierSpec.LOOPBACK_ADDR,
-    ): List<Int>? {
-        val root = runCatching { json.parseToJsonElement(jsonText) }.getOrNull() as? JsonObject
-            ?: return null
-        val cfgs = (root["cfgs"] as? JsonArray) ?: return emptyList()
-        val ports = mutableListOf<Int>()
-        for (cfg in cfgs) {
-            val obj = cfg as? JsonObject ?: continue
-            val bind = objOrCamel(obj, "bind_addr") ?: continue
-            val dst = objOrCamel(obj, "dst_addr") ?: continue
-            val bindIp = objOrCamel(bind, "ipv4")?.let { longOf(it, "addr") } ?: continue
-            val bindPort = (bind["port"] as? JsonPrimitive)?.intOrNull ?: continue
-            val dstIp = objOrCamel(dst, "ipv4")?.let { longOf(it, "addr") } ?: continue
-            val dstPort = (dst["port"] as? JsonPrimitive)?.intOrNull ?: continue
-            if (bindIp == bindAddr && dstIp == loopback && bindPort == dstPort) {
-                ports.add(bindPort)
-            }
-        }
-        return ports.distinct().sorted()
-    }
-
     private fun parseMyNode(node: JsonObject): MyNodeInfo {
         val v4 = objOrCamel(node, "virtual_ipv4")
             ?.let { objOrCamel(it, "address") }

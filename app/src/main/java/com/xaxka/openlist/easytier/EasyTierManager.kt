@@ -32,12 +32,9 @@ import com.xaxka.openlist.data.log.ServerLog
  * App 回前台时由 [ensureRecovered] 校验实例存活（应对 OPPO 等厂商后台冻结/清理后
  * 实例丢失、恢复前台却无法自愈的问题）。
  *
- * 端口转发为「动态绑定 + 实际生效对账」：启动配置不带 [[port_forward]]（ipv4=DHCP，
- * 启动瞬间虚拟 IP 尚未分配）；轮询 collectNetworkInfos 拿到 DHCP 分配的虚拟 IP 后，
- * 先经 PortForwardManageRpc.ListPortForward 读取实例当前实际生效的转发规则，
- * 与期望端口列表求差集，再经 ConfigRpc.PatchConfig 增量下发（REMOVE 多余 + ADD 缺失）。
- * 状态页的「已映射端口」以实际生效规则为准，单次下发失败时透出核心返回的真实错误并
- * 在下轮轮询自动重试，不再依赖单次的乐观记录。
+ * 无需下发端口转发规则：EasyTier no-tun 模式下，核心的代理引擎会把组网设备发往本机
+ * 虚拟 IP 的 TCP/UDP/ICMP 包自动落到本机回环同端口，即 <虚拟IP>:5244 直达 OpenList。
+ * 本类只负责实例生命周期、状态轮询与自愈。
  */
 @Singleton
 class EasyTierManager @Inject constructor(
@@ -62,14 +59,12 @@ class EasyTierManager @Inject constructor(
     enum class Phase { STOPPED, STARTING, RUNNING, STOPPING, ERROR, UNAVAILABLE }
 
     /**
-     * UI 快照：phase + 虚拟 IPv4 + 映射端口列表 + 已连节点数 + 说明文本，
+     * UI 快照：phase + 虚拟 IPv4 + 已连节点数 + 说明文本，
      * 以及状态页所需的只读明细（本节点/对等节点/路由/事件日志/启动配置脱敏文本）。
      */
     data class Status(
         val phase: Phase = Phase.STOPPED,
         val virtualIpv4: String? = null,
-        val portMapped: Boolean = false,
-        val mappedPorts: List<Int> = emptyList(),
         val peerCount: Int = 0,
         val detail: String = "",
         val myNode: MyNodeInfo? = null,
@@ -97,15 +92,9 @@ class EasyTierManager @Inject constructor(
             } else {
                 "运行中 · 等待分配虚拟 IP"
             }
-            // 端口转发下发失败等异常通过 detail 承载，优先于通用进度文案展示
             if (detail.isNotEmpty()) return "$head · $detail"
-            val tail = when {
-                portMapped && mappedPorts.isNotEmpty() ->
-                    "端口 ${EasyTierSpec.formatPorts(mappedPorts)} 已映射"
-                virtualIpv4 != null -> "端口映射添加中"
-                else -> "映射待 DHCP 分配 IP 后自动添加"
-            }
-            return "$head · $tail"
+            // no-tun 隐式映射：虚拟 IP 的任意端口直达本机同端口，无需逐端口配置
+            return if (virtualIpv4 != null) "$head · 任意端口直达本机" else head
         }
 
         private fun String.appendDetail(d: String) = if (d.isEmpty()) this else "$this：$d"
@@ -124,20 +113,6 @@ class EasyTierManager @Inject constructor(
 
     @Volatile
     private var instanceStarted = false
-
-    /** 最近一次成功下发后认为应存在的绑定地址与端口（虚拟 IP 变化时用于移除旧规则）。 */
-    @Volatile
-    private var forwardedAddr: Long? = null
-
-    @Volatile
-    private var forwardedPorts: List<Int> = emptyList()
-
-    /** 最近一次端口转发下发的真实错误（来自核心 RPC），成功后清空。 */
-    @Volatile
-    private var lastForwardError: String? = null
-
-    /** 上一条已写日志的下发错误（同一错误不重复刷屏）。 */
-    private var lastLoggedForwardError: String? = null
 
     /** collectNetworkInfos 连续未找到本实例的轮数。 */
     private var missingStreak = 0
@@ -182,7 +157,7 @@ class EasyTierManager @Inject constructor(
      * App 回到前台时调用（ProcessLifecycleOwner ON_START）：
      * OPPO 等厂商后台会冻结/清理进程，解冻后原生实例可能已丢失而 Kotlin 侧状态仍是
      * 「已启动」——这里以 listInstances 的实际结果为准校验，实例不在则立即重启，
-     * 仍在则立即轮询一次，尽快重新对齐状态与端口转发。
+     * 仍在则立即轮询一次，尽快重新对齐状态。
      * 另兜底：偏好开启但实例未启动（后台被停止等边缘情况）时按偏好补拉起。
      */
     fun ensureRecovered() {
@@ -224,7 +199,6 @@ class EasyTierManager @Inject constructor(
         val networkName = prefs.easytierNetwork.first()
         val networkSecret = prefs.easytierNetworkSecret.first()
         val peerUri = prefs.easytierPeerUri.first()
-        val portsRaw = prefs.easytierPorts.first()
         val quicProxy = prefs.easytierQuicProxy.first()
         val effectiveNetwork = networkName.ifBlank { EasyTierSpec.DEFAULT_NETWORK_NAME }
         val toml = EasyTierSpec.buildToml(networkName, networkSecret, peerUri, enableQuicProxy = quicProxy)
@@ -234,7 +208,7 @@ class EasyTierManager @Inject constructor(
         log(
             LoggableLevel.INFO,
             "启动内网映射：network=$effectiveNetwork, peer=${if (peerUri.isBlank()) "（未配置）" else peerUri}, " +
-                "quicProxy=$quicProxy, 端口 ${EasyTierSpec.formatPorts(desiredPorts(portsRaw))} 将在 DHCP 分配虚拟 IP 后动态映射",
+                "quicProxy=$quicProxy（no-tun：虚拟 IP 任意端口直达本机同端口）",
         )
 
         transition(Status(Phase.STARTING))
@@ -256,9 +230,6 @@ class EasyTierManager @Inject constructor(
         }
 
         instanceStarted = true
-        forwardedAddr = null
-        forwardedPorts = emptyList()
-        lastForwardError = null
         missingStreak = 0
         errorStreak = 0
         transition(Status(Phase.RUNNING, detail = "正在连接网络"))
@@ -283,9 +254,6 @@ class EasyTierManager @Inject constructor(
             }
         }
         instanceStarted = false
-        forwardedAddr = null
-        forwardedPorts = emptyList()
-        lastForwardError = null
         missingStreak = 0
         errorStreak = 0
         displayToml = ""
@@ -319,13 +287,9 @@ class EasyTierManager @Inject constructor(
         monitorJob = null
     }
 
-    /** 解析偏好端口列表；空白/全部非法时回退仅映射默认端口。 */
-    internal fun desiredPorts(raw: String): List<Int> =
-        EasyTierSpec.parsePorts(raw).ifEmpty { listOf(EasyTierSpec.PRIMARY_PORT) }
-
     /**
-     * collectNetworkInfos → 刷新状态；实例丢失/异常达到阈值时自动重启（自愈）；
-     * 拿到 DHCP 虚拟 IP 后对账并校正端口转发规则。调用方需持有 [lock]。
+     * collectNetworkInfos → 刷新状态；实例丢失/异常达到阈值时自动重启（自愈）。
+     * 调用方需持有 [lock]。
      */
     private suspend fun pollStatusLocked() {
         val jsonText = runCatching { EasyTierJNI.collectNetworkInfos(COLLECT_MAX) }.getOrElse { e ->
@@ -368,44 +332,11 @@ class EasyTierManager @Inject constructor(
         }
         errorStreak = 0
 
-        val addr = info.ipv4Addr
-        val desired = desiredPorts(prefs.easytierPorts.first())
-
-        // DHCP 虚拟 IP 已分配：以实际生效的转发规则为准做对账。
-        // 注意：转发下发结果不能阻塞状态刷新——否则一旦下发失败提前返回，页面会一直
-        // 停在「等待分配虚拟 IP」，即便实例已连接并拿到 IP。
-        if (addr != null) {
-            reconcilePortForwards(addr, desired)
-        }
-
-        // 已映射端口以「实际生效 ∩ 期望」为准；read-back 失败时退回乐观记录。
-        val actualPorts = if (addr != null) readActualPorts(addr) else null
-        val effectivePorts: List<Int>
-        if (actualPorts != null) {
-            val actualSet = actualPorts.toSet()
-            effectivePorts = desired.filter { it in actualSet }
-        } else {
-            effectivePorts = if (forwardedAddr == addr) forwardedPorts else emptyList()
-        }
-
-        val forwardDetail = buildString {
-            if (effectivePorts != desired) {
-                val missing = desired - effectivePorts.toSet()
-                append("端口 ${EasyTierSpec.formatPorts(missing)} 映射中")
-                val err = lastForwardError
-                if (!err.isNullOrEmpty()) append(" · 下发失败：${err.take(120)}")
-            }
-        }
-
-        // 状态始终反映已知的虚拟 IP（与端口映射下发结果解耦）：
-        // 拿到 DHCP IP 即显示「运行中 · <IP>」，映射失败以 detail 提示并在下一轮重试。
         val next = Status(
             Phase.RUNNING,
             virtualIpv4 = info.ipv4,
-            portMapped = effectivePorts == desired && desired.isNotEmpty(),
-            mappedPorts = effectivePorts,
             peerCount = info.peerCount,
-            detail = forwardDetail,
+            detail = "",
             myNode = info.myNode,
             peers = info.peers,
             routes = info.routes,
@@ -413,107 +344,6 @@ class EasyTierManager @Inject constructor(
         )
         if (next != _state.value) transition(next)
     }
-
-    /**
-     * 端口转发对账：读取实例当前实际生效规则，与期望端口求差集后增量下发。
-     * 虚拟 IP 变化时先移除旧地址上的旧规则（尽力而为，失败不阻塞新地址下发）。
-     * 成功后更新本地乐观记录（read-back 失败时的降级依据），并清空残留错误。
-     */
-    private suspend fun reconcilePortForwards(addr: Long, desired: List<Int>) {
-        val oldAddr = forwardedAddr
-        val oldPorts = forwardedPorts
-        val ipChanged = oldAddr != null && oldAddr != addr
-
-        // IP 变化：先移除旧地址上的全部旧规则
-        if (ipChanged && oldPorts.isNotEmpty()) {
-            sendPortForwardPatch(oldAddr!!, oldPorts, addr, emptyList())
-        }
-
-        val actualPorts = readActualPorts(addr)
-        val removePorts: List<Int>
-        val addPorts: List<Int>
-        if (actualPorts != null) {
-            val desiredSet = desired.toSet()
-            removePorts = actualPorts.filter { it !in desiredSet }
-            addPorts = desired.filter { it !in actualPorts.toSet() }
-        } else {
-            // read-back 失败：退回「本地乐观记录」的增量同步（旧逻辑）
-            val base = if (ipChanged) emptyList() else oldPorts
-            removePorts = base - desired.toSet()
-            addPorts = desired - base.toSet()
-        }
-
-        if (removePorts.isEmpty() && addPorts.isEmpty()) {
-            forwardedAddr = addr
-            forwardedPorts = desired
-            lastForwardError = null
-            return
-        }
-
-        if (sendPortForwardPatch(addr, removePorts, addr, addPorts)) {
-            forwardedAddr = addr
-            forwardedPorts = desired
-            lastForwardError = null
-            val removedText = if (removePorts.isNotEmpty())
-                "，移除 ${EasyTierSpec.formatPorts(removePorts)}" else ""
-            val addedText = if (addPorts.isNotEmpty())
-                "，新增 ${EasyTierSpec.formatPorts(addPorts)}" else ""
-            log(
-                LoggableLevel.INFO,
-                "端口转发已更新：${infoIpv4(addr)} -> 127.0.0.1（tcp）$removedText$addedText，" +
-                    "当前应映射 ${EasyTierSpec.formatPorts(desired)}",
-            )
-        }
-        // 失败保持现状等待下轮重试（REMOVE 未执行也无副作用，最多多余旧规则）
-    }
-
-    /**
-     * 通过 PortForwardManageRpc.ListPortForward 读取实例实际生效的转发规则，
-     * 返回绑定在本虚拟 IP 且指向回环同端口的规则端口；RPC 失败/解析失败返回 null。
-     */
-    private fun readActualPorts(addr: Long): List<Int>? {
-        val resp = runCatching {
-            EasyTierJNI.callJsonRpc(
-                EasyTierSpec.PORT_FORWARD_RPC_SERVICE,
-                EasyTierSpec.LIST_PORT_FORWARD_METHOD,
-                EasyTierSpec.buildInstanceSelectorJson(),
-            )
-        }.getOrNull() ?: return null
-        return runCatching { EasyTierInfoParser.parseForwardedPorts(resp, addr) }.getOrNull()
-    }
-
-    /** 通过 ConfigRpc.PatchConfig 下发端口转发增量补丁；成功返回 true，失败记录真实错误。 */
-    private fun sendPortForwardPatch(
-        removeAddr: Long,
-        removePorts: List<Int>,
-        addAddr: Long,
-        addPorts: List<Int>,
-    ): Boolean {
-        if (addPorts.isEmpty() && removePorts.isEmpty()) return true
-
-        val payload = EasyTierSpec.buildPortForwardPatchJson(removeAddr, removePorts, addAddr, addPorts)
-        val error = runCatching {
-            EasyTierJNI.callJsonRpc(
-                EasyTierSpec.CONFIG_RPC_SERVICE,
-                EasyTierSpec.PATCH_CONFIG_METHOD,
-                payload,
-            )
-            null
-        }.getOrElse { e -> e.message ?: lastError("端口转发下发失败") }
-
-        if (error != null) {
-            lastForwardError = error
-            // 同一错误只打一次日志，避免 4s 一轮刷屏；错误变化时再提示
-            if (error != lastLoggedForwardError) {
-                lastLoggedForwardError = error
-                log(LoggableLevel.WARN, "端口转发下发失败（稍后重试）：$error")
-            }
-            return false
-        }
-        return true
-    }
-
-    private fun infoIpv4(addr: Long): String = EasyTierSpec.formatIpv4(addr)
 
     private fun transition(status: Status) {
         // 启动配置随所有状态携带（STOPPED 时 startLocked 前已清空 displayToml）
