@@ -222,7 +222,7 @@ class SettingsViewModel @Inject constructor(
     private fun setEasytierText(setter: suspend (String) -> Unit, value: String, label: String) {
         viewModelScope.launch {
             setter(value)
-            snack("$label已保存，重开内网映射开关或重启服务后生效")
+            snack("${label}已保存，重开内网映射开关或重启服务后生效")
         }
     }
 
