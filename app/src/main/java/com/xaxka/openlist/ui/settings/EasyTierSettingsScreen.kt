@@ -320,7 +320,6 @@ private fun RouteNodeBlock(route: RouteDetail, peer: PeerDetail?) {
             }
             append(" · cost ${route.cost}")
             if (route.pathLatencyMs != 0) append(" · 延迟 ${route.pathLatencyMs}ms")
-            if (route.version.isNotBlank()) append(" · v${route.version}")
         }
         Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         peer?.conns?.forEach { conn -> ConnDetailLine(conn) }
@@ -337,9 +336,9 @@ private fun PeerOnlyBlock(peer: PeerDetail) {
 }
 
 /**
- * 单条连接明细行：隧道类型 → 对端地址 · 直连/中继 · 延迟 · 丢包 · ↓收 ↑发。
- * 直连/中继按 P2P 打洞结果（directly_connected_conns）判定；丢包与流量恒定展示
- * （0 表示无丢包/尚无流量），不再像旧实现只在非零时才出现。
+ * 单条连接明细行：隧道类型 → 对端地址 · 延迟 · 丢包 · ↓收 ↑发。
+ * 直连/中继不再单独标注——路由条目的 cost 已能体现路径中转情况；
+ * 丢包与流量恒定展示（0 表示无丢包/尚无流量）。
  */
 @Composable
 private fun ConnDetailLine(conn: PeerConn) {
@@ -347,7 +346,6 @@ private fun ConnDetailLine(conn: PeerConn) {
         append("    ")
         append(conn.tunnelType.ifBlank { "tunnel" })
         conn.remoteAddr?.let { append(" → ").append(it) }
-        append(if (conn.isDirect) " · P2P 直连" else " · 中继")
         if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
         append(" · 丢包 ${"%.1f".format(conn.lossRate * 100)}%")
         append(" · ↓${EasyTierSpec.formatBytes(conn.rxBytes)} ↑${EasyTierSpec.formatBytes(conn.txBytes)}")
