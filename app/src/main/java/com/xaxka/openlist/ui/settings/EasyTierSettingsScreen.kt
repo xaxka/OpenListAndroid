@@ -304,8 +304,9 @@ private fun EasyTierStatusSection(detail: EasyTierManager.Status) {
 
 /**
  * 路由表中的一个节点 + 对应的连接明细（若有）。
- * 标题行：主机名 · 虚拟 IP · 累计收发流量（多连接按节点汇总）。
- * 摘要行：下一跳（主机名，路由表中查不到时兜底 Peer ID）· cost · 路径延迟。
+ * 标题行：主机名 · 虚拟 IP。
+ * 摘要行：下一跳（主机名，路由表中查不到时兜底 Peer ID）· cost · 路径延迟 ·
+ * 累计收发流量（流量紧随第一个延迟之后展示，多连接按节点汇总）。
  */
 @Composable
 private fun RouteNodeBlock(
@@ -317,10 +318,6 @@ private fun RouteNodeBlock(
         val title = buildString {
             append(if (route.hostname.isNotBlank()) route.hostname else "Peer ${route.peerId}")
             route.ipv4?.let { append(" · ").append(it) }
-            // 流量紧跟节点标识：与该节点的关联最直接（自连接建立起累计）
-            peer?.conns?.takeIf { it.isNotEmpty() }?.let { conns ->
-                append(" · ↓${EasyTierSpec.formatBytes(conns.sumOf { it.rxBytes })} ↑${EasyTierSpec.formatBytes(conns.sumOf { it.txBytes })}")
-            }
         }
         Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
         val parts = buildList {
@@ -330,6 +327,10 @@ private fun RouteNodeBlock(
             }
             add("cost ${route.cost}")
             if (route.pathLatencyMs != 0) add("延迟 ${route.pathLatencyMs}ms")
+            // 流量统计紧随第一个延迟之后（自连接建立起累计，多连接按节点汇总）
+            peer?.conns?.takeIf { it.isNotEmpty() }?.let { conns ->
+                add("↓${EasyTierSpec.formatBytes(conns.sumOf { it.rxBytes })} ↑${EasyTierSpec.formatBytes(conns.sumOf { it.txBytes })}")
+            }
         }
         Text(
             parts.joinToString(" · "),
@@ -353,7 +354,7 @@ private fun PeerOnlyBlock(peer: PeerDetail) {
  * 单条连接明细行：对端地址 · 延迟 · 丢包（行首缩进 2 空格）。
  * 字体与标题/摘要行保持一致（默认 sans）——等宽字体的空格与中文均为全宽，
  * 视觉间隙偏大，与上两行不同步；地址已含协议前缀，无需等宽对齐。
- * 累计收发流量上移至节点标题行（按节点汇总）；直连/中继由 cost 体现。
+ * 累计收发流量位于摘要行第一个延迟之后（按节点汇总）；直连/中继由 cost 体现。
  */
 @Composable
 private fun ConnDetailLine(conn: PeerConn) {
