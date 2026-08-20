@@ -168,23 +168,25 @@ class EasyTierSpecTest {
     }
 
     @Test
-    fun `展示配置对安全模式私钥脱敏而公钥原样展示`() {
-        // 私钥脱敏防落屏；公钥可公开，保留便于排查组网问题
+    fun `展示配置对安全模式密钥对均脱敏`() {
+        // 私钥公钥都脱敏，避免密钥落屏/截图
         val display = EasyTierSpec.buildDisplayToml(
             "net", "s3cret", "",
             enableQuicProxy = false,
             secureMode = true,
             localPrivateKey = "priv-secret-base64",
-            localPublicKey = "pub-open-base64",
+            localPublicKey = "pub-secret-base64",
         )
         assertTrue(display.contains("""local_private_key = "********""""))
-        assertTrue(display.contains("""local_public_key = "pub-open-base64""""))
+        assertTrue(display.contains("""local_public_key = "********""""))
         assertFalse(display.contains("priv-secret-base64"))
-        // 空白私钥保持空白（不显示占位符）
+        assertFalse(display.contains("pub-secret-base64"))
+        // 空白密钥保持空白（不显示占位符）
         val displayBlankKey = EasyTierSpec.buildDisplayToml(
             "net", "", "", enableQuicProxy = false,
             secureMode = true, localPrivateKey = "", localPublicKey = "",
         )
         assertFalse(displayBlankKey.contains("local_private_key"))
+        assertFalse(displayBlankKey.contains("local_public_key"))
     }
 }

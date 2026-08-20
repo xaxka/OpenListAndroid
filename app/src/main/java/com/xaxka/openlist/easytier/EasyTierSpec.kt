@@ -99,8 +99,8 @@ object EasyTierSpec {
     }
 
     /**
-     * 启动配置的脱敏展示版本：网络密钥与安全模式私钥以占位符呈现，其余与 [buildToml] 一致
-     * （公钥可公开，原样展示便于排查组网问题）。供设置页「启动配置」只读展示，避免密钥落屏/截图。
+     * 启动配置的脱敏展示版本：网络密钥与安全模式密钥对（私钥、公钥）均以占位符呈现，
+     * 其余与 [buildToml] 一致。供设置页「启动配置」只读展示，避免密钥落屏/截图。
      */
     fun buildDisplayToml(
         networkName: String,
@@ -113,10 +113,11 @@ object EasyTierSpec {
     ): String {
         val maskedSecret = if (networkSecret.isBlank()) networkSecret else SECRET_MASKED
         val maskedPrivateKey = if (localPrivateKey.isBlank()) localPrivateKey else SECRET_MASKED
+        val maskedPublicKey = if (localPublicKey.isBlank()) localPublicKey else SECRET_MASKED
         return buildToml(
             networkName, maskedSecret, peerUri, enableQuicProxy, secureMode,
             localPrivateKey = maskedPrivateKey,
-            localPublicKey = localPublicKey,
+            localPublicKey = maskedPublicKey,
         )
     }
 
