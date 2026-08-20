@@ -92,8 +92,7 @@ class EasyTierManager @Inject constructor(
                 "运行中 · 等待分配虚拟 IP"
             }
             if (detail.isNotEmpty()) return "$head · $detail"
-            // no-tun 隐式映射：虚拟 IP 的任意端口直达本机同端口，无需逐端口配置
-            return if (virtualIpv4 != null) "$head · 任意端口直达本机" else head
+            return head
         }
 
         private fun String.appendDetail(d: String) = if (d.isEmpty()) this else "$this：$d"
@@ -222,8 +221,7 @@ class EasyTierManager @Inject constructor(
             LoggableLevel.INFO,
             "启动内网映射：network=$effectiveNetwork, peer=${if (peerUri.isBlank()) "（未配置）" else peerUri}, " +
                 "quicProxy=$quicProxy, secureMode=$secureMode" +
-                (if (keyPair != null) "（节点密钥已就绪）" else "") +
-                "（no-tun：虚拟 IP 任意端口直达本机同端口）",
+                (if (keyPair != null) "（节点密钥已就绪）" else ""),
         )
 
         transition(Status(Phase.STARTING))

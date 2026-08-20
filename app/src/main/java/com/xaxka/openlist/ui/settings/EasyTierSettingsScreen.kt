@@ -123,7 +123,7 @@ fun EasyTierSettingsScreen(
             ) {
                 SettingsSwitchPreference(
                     title = "启用内网映射",
-                    subtitle = "随服务启停；no-tun 模式（不使用 VPN），组网设备经虚拟 IP 直达本机任意端口（如 5244）",
+                    subtitle = "随服务启停；no-tun 模式（不使用 VPN）",
                     icon = Icons.Outlined.Lan,
                     value = state.easytierEnabled,
                     onCheckedChange = viewModel::setEasytierEnabled
@@ -148,14 +148,14 @@ fun EasyTierSettingsScreen(
                 )
                 SettingsSwitchPreference(
                     title = "启用 QUIC 代理",
-                    subtitle = "enable_quic_proxy：把 TCP 流转为 QUIC 传输，弱网/中继场景更稳；变更需重启实例",
+                    subtitle = "TCP 流转为 QUIC 传输，弱网更稳；变更需重启",
                     icon = Icons.Outlined.Speed,
                     value = state.easytierQuicProxy,
                     onCheckedChange = viewModel::setEasytierQuicProxy
                 )
                 SettingsSwitchPreference(
                     title = "启用安全模式",
-                    subtitle = "secure_mode：节点间端到端加密（E2EE）+ Noise 握手 + 防重放；首次开启自动生成节点密钥（X25519）并持久化；对端需开启并升级到支持安全模式的版本，变更需重启实例",
+                    subtitle = "节点间端到端加密；对端需同开启并升级版本",
                     icon = Icons.Outlined.Security,
                     value = state.easytierSecureMode,
                     onCheckedChange = viewModel::setEasytierSecureMode
