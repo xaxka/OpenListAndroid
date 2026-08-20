@@ -304,7 +304,8 @@ private fun EasyTierStatusSection(detail: EasyTierManager.Status) {
 
 /**
  * 路由表中的一个节点 + 对应的连接明细（若有）。
- * 摘要行：下一跳（主机名，路由表中查不到时兜底 Peer ID）· cost · 路径延迟 · 该节点累计收发流量。
+ * 标题行：主机名 · 虚拟 IP · 累计收发流量（多连接按节点汇总）。
+ * 摘要行：下一跳（主机名，路由表中查不到时兜底 Peer ID）· cost · 路径延迟。
  */
 @Composable
 private fun RouteNodeBlock(
@@ -316,6 +317,10 @@ private fun RouteNodeBlock(
         val title = buildString {
             append(if (route.hostname.isNotBlank()) route.hostname else "Peer ${route.peerId}")
             route.ipv4?.let { append(" · ").append(it) }
+            // 流量紧跟节点标识：与该节点的关联最直接（自连接建立起累计）
+            peer?.conns?.takeIf { it.isNotEmpty() }?.let { conns ->
+                append(" · ↓${EasyTierSpec.formatBytes(conns.sumOf { it.rxBytes })} ↑${EasyTierSpec.formatBytes(conns.sumOf { it.txBytes })}")
+            }
         }
         Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
         val parts = buildList {
@@ -325,10 +330,6 @@ private fun RouteNodeBlock(
             }
             add("cost ${route.cost}")
             if (route.pathLatencyMs != 0) add("延迟 ${route.pathLatencyMs}ms")
-            // 流量从连接明细行上移：多连接时按节点汇总（自连接建立起累计）
-            peer?.conns?.takeIf { it.isNotEmpty() }?.let { conns ->
-                add("↓${EasyTierSpec.formatBytes(conns.sumOf { it.rxBytes })} ↑${EasyTierSpec.formatBytes(conns.sumOf { it.txBytes })}")
-            }
         }
         Text(
             parts.joinToString(" · "),
