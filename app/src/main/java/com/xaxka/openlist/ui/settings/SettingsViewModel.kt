@@ -218,6 +218,25 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 手动重启内网映射实例：掉线/连接异常时的兜底自愈（自愈阈值未触发或场景未覆盖时）。
+     * 未启用或 OpenList 服务未运行时仅提示不执行（实例生命周期随服务启停）。
+     */
+    fun restartEasyTier() {
+        viewModelScope.launch {
+            if (!prefs.easytierEnabled.first()) {
+                snack("内网映射未启用，请先打开总开关")
+                return@launch
+            }
+            if (serverManager.state.value != ServerState.RUNNING) {
+                snack("OpenList 服务未运行，启动服务后将自动连接")
+                return@launch
+            }
+            snack("正在重启内网映射…")
+            easyTier.restart()
+        }
+    }
+
     /** 网络名称/密钥/对端 URI：保存后需重启服务（或重开总开关）生效。 */
     fun setEasytierNetwork(value: String) = setEasytierText(prefs::setEasytierNetwork, value, "网络名称")
 

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Visibility
@@ -162,6 +163,13 @@ fun EasyTierSettingsScreen(
                 )
 
                 SettingsDividerPreference("运行状态")
+
+                SettingsBasicPreference(
+                    title = "重启内网映射",
+                    subtitle = "掉线或连接异常时手动重启实例恢复",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.Refresh) },
+                    onTap = viewModel::restartEasyTier
+                )
 
                 SettingsBasicPreference(
                     title = "映射状态",
