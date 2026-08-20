@@ -49,6 +49,8 @@ class AppPrefsRepository @Inject constructor(
         val EASYTIER_PEER_URI = stringPreferencesKey("easyTierPeerUri")
         val EASYTIER_QUIC_PROXY = booleanPreferencesKey("easyTierQuicProxy")
         val EASYTIER_SECURE_MODE = booleanPreferencesKey("easyTierSecureMode")
+        val EASYTIER_LOCAL_PRIVATE_KEY = stringPreferencesKey("easyTierLocalPrivateKey")
+        val EASYTIER_LOCAL_PUBLIC_KEY = stringPreferencesKey("easyTierLocalPublicKey")
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -122,6 +124,12 @@ class AppPrefsRepository @Inject constructor(
     /** EasyTier 安全模式（[secure_mode] enabled：E2EE + Noise 握手 + 防重放），默认关闭保持旧网络兼容 */
     val easytierSecureMode: Flow<Boolean> = data.map { it[Keys.EASYTIER_SECURE_MODE] ?: false }
 
+    /** EasyTier 安全模式本机 X25519 私钥（base64，首次开启安全模式时自动生成并持久化，保持节点身份稳定） */
+    val easytierLocalPrivateKey: Flow<String> = data.map { it[Keys.EASYTIER_LOCAL_PRIVATE_KEY] ?: "" }
+
+    /** EasyTier 安全模式本机 X25519 公钥（base64，由私钥派生） */
+    val easytierLocalPublicKey: Flow<String> = data.map { it[Keys.EASYTIER_LOCAL_PUBLIC_KEY] ?: "" }
+
     // ---------- 写入 ----------
 
     suspend fun setSilentJumpApp(value: Boolean) = edit { it[Keys.SILENT_JUMP_APP] = value }
@@ -162,6 +170,10 @@ class AppPrefsRepository @Inject constructor(
     suspend fun setEasytierQuicProxy(value: Boolean) = edit { it[Keys.EASYTIER_QUIC_PROXY] = value }
 
     suspend fun setEasytierSecureMode(value: Boolean) = edit { it[Keys.EASYTIER_SECURE_MODE] = value }
+
+    suspend fun setEasytierLocalPrivateKey(value: String) = edit { it[Keys.EASYTIER_LOCAL_PRIVATE_KEY] = value }
+
+    suspend fun setEasytierLocalPublicKey(value: String) = edit { it[Keys.EASYTIER_LOCAL_PUBLIC_KEY] = value }
 
     // ---------- 内部 ----------
 

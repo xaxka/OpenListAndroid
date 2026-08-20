@@ -111,6 +111,40 @@ class EasyTierSpecTest {
     }
 
     @Test
+    fun `安全模式携带节点密钥时写入密钥字段`() {
+        // TOML 入口无 normalize_secure_mode_config，密钥必须显式携带
+        val toml = EasyTierSpec.buildToml(
+            "net", "s3cret", "",
+            secureMode = true,
+            localPrivateKey = "priv-base64-32bytes",
+            localPublicKey = "pub-base64-32bytes",
+        )
+        assertTrue(toml.contains("""local_private_key = "priv-base64-32bytes""""))
+        assertTrue(toml.contains("""local_public_key = "pub-base64-32bytes""""))
+        // 字段顺序：enabled 在前
+        assertTrue(toml.indexOf("enabled = true") < toml.indexOf("local_private_key"))
+    }
+
+    @Test
+    fun `安全模式密钥缺省不写入密钥字段`() {
+        val toml = EasyTierSpec.buildToml("net", "", "", secureMode = true)
+        assertFalse(toml.contains("local_private_key"))
+        assertFalse(toml.contains("local_public_key"))
+    }
+
+    @Test
+    fun `安全模式空白密钥不写入密钥字段`() {
+        val toml = EasyTierSpec.buildToml(
+            "net", "", "",
+            secureMode = true,
+            localPrivateKey = "  ",
+            localPublicKey = "",
+        )
+        assertFalse(toml.contains("local_private_key"))
+        assertFalse(toml.contains("local_public_key"))
+    }
+
+    @Test
     fun `安全模式与QUIC代理可同时开启`() {
         val toml = EasyTierSpec.buildToml("net", "s3cret", "tcp://1.2.3.4:11010", enableQuicProxy = true, secureMode = true)
         assertTrue(toml.contains("[secure_mode]"))
@@ -131,5 +165,26 @@ class EasyTierSpecTest {
         val displaySecure = EasyTierSpec.buildDisplayToml("net", "s3cret", "", enableQuicProxy = false, secureMode = true)
         assertTrue(displaySecure.contains("[secure_mode]"))
         assertFalse(displaySecure.contains("s3cret"))
+    }
+
+    @Test
+    fun `展示配置对安全模式私钥脱敏而公钥原样展示`() {
+        // 私钥脱敏防落屏；公钥可公开，保留便于排查组网问题
+        val display = EasyTierSpec.buildDisplayToml(
+            "net", "s3cret", "",
+            enableQuicProxy = false,
+            secureMode = true,
+            localPrivateKey = "priv-secret-base64",
+            localPublicKey = "pub-open-base64",
+        )
+        assertTrue(display.contains("""local_private_key = "********""""))
+        assertTrue(display.contains("""local_public_key = "pub-open-base64""""))
+        assertFalse(display.contains("priv-secret-base64"))
+        // 空白私钥保持空白（不显示占位符）
+        val displayBlankKey = EasyTierSpec.buildDisplayToml(
+            "net", "", "", enableQuicProxy = false,
+            secureMode = true, localPrivateKey = "", localPublicKey = "",
+        )
+        assertFalse(displayBlankKey.contains("local_private_key"))
     }
 }

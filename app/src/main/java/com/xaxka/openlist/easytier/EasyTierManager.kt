@@ -201,14 +201,29 @@ class EasyTierManager @Inject constructor(
         val quicProxy = prefs.easytierQuicProxy.first()
         val secureMode = prefs.easytierSecureMode.first()
         val effectiveNetwork = networkName.ifBlank { EasyTierSpec.DEFAULT_NETWORK_NAME }
-        val toml = EasyTierSpec.buildToml(networkName, networkSecret, peerUri, enableQuicProxy = quicProxy, secureMode = secureMode)
-        displayToml = EasyTierSpec.buildDisplayToml(networkName, networkSecret, peerUri, quicProxy, secureMode)
+        // 安全模式密钥对：TOML 入口不执行 normalize_secure_mode_config（CLI --secure-mode
+        // 的自动生成仅存在于 CLI/Web GUI 入口），缺失时核心报 "local private key is not set"，
+        // 故 App 侧生成 X25519 密钥对并持久化（身份稳定，优于每次启动的临时密钥）。
+        val keyPair = if (secureMode) ensureSecureModeKeyPair() else null
+        val toml = EasyTierSpec.buildToml(
+            networkName, networkSecret, peerUri,
+            enableQuicProxy = quicProxy, secureMode = secureMode,
+            localPrivateKey = keyPair?.first.orEmpty(),
+            localPublicKey = keyPair?.second.orEmpty(),
+        )
+        displayToml = EasyTierSpec.buildDisplayToml(
+            networkName, networkSecret, peerUri, quicProxy, secureMode,
+            localPrivateKey = keyPair?.first.orEmpty(),
+            localPublicKey = keyPair?.second.orEmpty(),
+        )
 
         // 密钥不落日志（展示 TOML 已脱敏）
         log(
             LoggableLevel.INFO,
             "启动内网映射：network=$effectiveNetwork, peer=${if (peerUri.isBlank()) "（未配置）" else peerUri}, " +
-                "quicProxy=$quicProxy, secureMode=$secureMode（no-tun：虚拟 IP 任意端口直达本机同端口）",
+                "quicProxy=$quicProxy, secureMode=$secureMode" +
+                (if (keyPair != null) "（节点密钥已就绪）" else "") +
+                "（no-tun：虚拟 IP 任意端口直达本机同端口）",
         )
 
         transition(Status(Phase.STARTING))
@@ -235,6 +250,41 @@ class EasyTierManager @Inject constructor(
         transition(Status(Phase.RUNNING, detail = "正在连接网络"))
         log(LoggableLevel.INFO, "EasyTier 实例已启动（${EasyTierSpec.INSTANCE_NAME}，no-tun）")
         startMonitor()
+    }
+
+    /**
+     * 确保安全模式密钥对可用（base64 私钥/公钥）：
+     * - 首次（无私钥）：生成 X25519 密钥对并持久化
+     * - 私钥损坏（非法 base64 / 长度异常）：重新生成
+     * - 公钥始终从私钥重新派生——上游会校验 "public key does not match its private key"，
+     *   重新派生可自愈存储不一致，同时覆盖持久化的公钥
+     */
+    private suspend fun ensureSecureModeKeyPair(): Pair<String, String> {
+        val storedPrivate = prefs.easytierLocalPrivateKey.first()
+        val privateBytes = storedPrivate.takeIf { it.isNotBlank() }
+            ?.let { X25519.decodeBase64(it) }
+
+        if (privateBytes == null || privateBytes.size != 32) {
+            val fresh = X25519.generatePrivateKey()
+            val privateKey = X25519.encodeBase64(fresh)
+            val publicKey = X25519.encodeBase64(X25519.publicFromPrivateKey(fresh))
+            prefs.setEasytierLocalPrivateKey(privateKey)
+            prefs.setEasytierLocalPublicKey(publicKey)
+            log(
+                LoggableLevel.INFO,
+                if (storedPrivate.isBlank()) "已自动生成安全模式节点密钥（X25519，持久化存储）"
+                else "存储的安全模式私钥无效，已重新生成",
+            )
+            return privateKey to publicKey
+        }
+
+        val privateKey = X25519.encodeBase64(privateBytes)
+        val publicKey = X25519.encodeBase64(X25519.publicFromPrivateKey(privateBytes))
+        if (publicKey != prefs.easytierLocalPublicKey.first()) {
+            prefs.setEasytierLocalPublicKey(publicKey)
+            log(LoggableLevel.WARN, "安全模式公钥与私钥不一致，已按私钥重新派生并修正")
+        }
+        return privateKey to publicKey
     }
 
     /** 停止实例；调用方需持有 [lock]。 */

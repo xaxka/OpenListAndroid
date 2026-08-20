@@ -12,7 +12,10 @@ package com.xaxka.openlist.easytier
  * TOML 字段对照 easytier-core/src/config/toml.rs（Config 结构）：
  * - 顶层 instance_name / hostname / dhcp
  * - [network_identity] network_name / network_secret
- * - [secure_mode] enabled（安全模式：E2EE + Noise 握手 + 防重放，对照官方文档 secure-mode）
+ * - [secure_mode] enabled / local_private_key / local_public_key
+ *   （TOML 入口不执行 normalize_secure_mode_config：enabled = true 必须携带密钥对，
+ *   否则核心报 "local private key is not set"；CLI --secure-mode 的自动生成仅存在于
+ *   CLI/Web GUI 入口，见 easytier/src/core.rs 与 config/api_input.rs）
  * - [[peer]] uri（多条可重复，本模板仅暴露一条）
  * - [flags] no_tun / enable_quic_proxy（均位于 FlagsInConfig，非顶层字段）
  */
@@ -43,6 +46,8 @@ object EasyTierSpec {
      * @param enableQuicProxy 是否启用 QUIC 代理（[flags] enable_quic_proxy，把 TCP 流转为 QUIC）
      * @param secureMode 是否启用安全模式（[secure_mode] enabled：E2EE + Noise 握手 + 防重放；
      * 对端节点也需开启并升级到支持安全模式的版本，默认关闭保持旧网络兼容）
+     * @param localPrivateKey 安全模式本机 X25519 私钥（base64）；secureMode 开启时必填
+     * @param localPublicKey 安全模式本机 X25519 公钥（base64，由私钥派生）；secureMode 开启时必填
      */
     fun buildToml(
         networkName: String,
@@ -50,6 +55,8 @@ object EasyTierSpec {
         peerUri: String,
         enableQuicProxy: Boolean = false,
         secureMode: Boolean = false,
+        localPrivateKey: String = "",
+        localPublicKey: String = "",
     ): String {
         val effectiveNetwork = networkName.ifBlank { DEFAULT_NETWORK_NAME }
         val sb = StringBuilder()
@@ -62,9 +69,17 @@ object EasyTierSpec {
         sb.append("network_secret = ").append(tomlString(networkSecret)).append("\n\n")
 
         if (secureMode) {
-            // 对照官方文档 secure-mode：[secure_mode] enabled，节点间独立协商端到端加密密钥
+            // 对照官方文档 secure-mode + common.proto SecureModeConfig：
+            // TOML 入口无自动密钥归一化，enabled = true 必须同时携带密钥对
             sb.append("[secure_mode]\n")
-            sb.append("enabled = true\n\n")
+            sb.append("enabled = true\n")
+            if (localPrivateKey.isNotBlank()) {
+                sb.append("local_private_key = ").append(tomlString(localPrivateKey)).append('\n')
+            }
+            if (localPublicKey.isNotBlank()) {
+                sb.append("local_public_key = ").append(tomlString(localPublicKey)).append('\n')
+            }
+            sb.append('\n')
         }
 
         sb.append("[flags]\n")
@@ -84,8 +99,8 @@ object EasyTierSpec {
     }
 
     /**
-     * 启动配置的脱敏展示版本：网络密钥以占位符呈现，其余与 [buildToml] 一致。
-     * 供设置页「启动配置」只读展示，避免密钥落屏/截图。
+     * 启动配置的脱敏展示版本：网络密钥与安全模式私钥以占位符呈现，其余与 [buildToml] 一致
+     * （公钥可公开，原样展示便于排查组网问题）。供设置页「启动配置」只读展示，避免密钥落屏/截图。
      */
     fun buildDisplayToml(
         networkName: String,
@@ -93,9 +108,16 @@ object EasyTierSpec {
         peerUri: String,
         enableQuicProxy: Boolean,
         secureMode: Boolean = false,
+        localPrivateKey: String = "",
+        localPublicKey: String = "",
     ): String {
         val maskedSecret = if (networkSecret.isBlank()) networkSecret else SECRET_MASKED
-        return buildToml(networkName, maskedSecret, peerUri, enableQuicProxy, secureMode)
+        val maskedPrivateKey = if (localPrivateKey.isBlank()) localPrivateKey else SECRET_MASKED
+        return buildToml(
+            networkName, maskedSecret, peerUri, enableQuicProxy, secureMode,
+            localPrivateKey = maskedPrivateKey,
+            localPublicKey = localPublicKey,
+        )
     }
 
     /** Ipv4Addr.addr（uint32 大端）→ 点分十进制。 */

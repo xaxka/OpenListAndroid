@@ -155,7 +155,7 @@ fun EasyTierSettingsScreen(
                 )
                 SettingsSwitchPreference(
                     title = "启用安全模式",
-                    subtitle = "secure_mode：节点间端到端加密（E2EE）+ Noise 握手 + 防重放；对端需开启并升级到支持安全模式的版本，变更需重启实例",
+                    subtitle = "secure_mode：节点间端到端加密（E2EE）+ Noise 握手 + 防重放；首次开启自动生成节点密钥（X25519）并持久化；对端需开启并升级到支持安全模式的版本，变更需重启实例",
                     icon = Icons.Outlined.Security,
                     value = state.easytierSecureMode,
                     onCheckedChange = viewModel::setEasytierSecureMode
