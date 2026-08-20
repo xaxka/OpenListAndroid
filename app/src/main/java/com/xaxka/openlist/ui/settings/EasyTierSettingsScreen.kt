@@ -276,10 +276,12 @@ private fun EasyTierStatusSection(detail: EasyTierManager.Status) {
 
     // ---- 网络节点（路由表为主，对等连接明细并入） ----
     val peersByPeerId = detail.peers.associateBy(PeerDetail::peerId)
+    // peer_id → 主机名（同快照路由表），下一跳展示用主机名替代裸 ID
+    val hostnameByPeerId = detail.routes.associate { it.peerId to it.hostname }
     if (detail.routes.isNotEmpty()) {
         StatusCard("网络节点（${detail.routes.size}）") {
             detail.routes.take(NODES_DISPLAY_LIMIT).forEach { route ->
-                RouteNodeBlock(route, peersByPeerId[route.peerId])
+                RouteNodeBlock(route, peersByPeerId[route.peerId], hostnameByPeerId)
             }
             if (detail.routes.size > NODES_DISPLAY_LIMIT) {
                 Text(
@@ -300,24 +302,39 @@ private fun EasyTierStatusSection(detail: EasyTierManager.Status) {
     }
 }
 
-/** 路由表中的一个节点 + 对应的连接明细（若有）。 */
+/**
+ * 路由表中的一个节点 + 对应的连接明细（若有）。
+ * 摘要行：下一跳（主机名，路由表中查不到时兜底 Peer ID）· cost · 路径延迟 · 该节点累计收发流量。
+ */
 @Composable
-private fun RouteNodeBlock(route: RouteDetail, peer: PeerDetail?) {
+private fun RouteNodeBlock(
+    route: RouteDetail,
+    peer: PeerDetail?,
+    hostnameByPeerId: Map<Long, String>
+) {
     Column(Modifier.padding(vertical = 6.dp)) {
         val title = buildString {
             append(if (route.hostname.isNotBlank()) route.hostname else "Peer ${route.peerId}")
             route.ipv4?.let { append(" · ").append(it) }
         }
         Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-        val sub = buildString {
-            append("peer ${route.peerId}")
+        val parts = buildList {
             if (route.nextHopPeerId != 0L && route.nextHopPeerId != route.peerId) {
-                append(" · 下一跳 ${route.nextHopPeerId}")
+                val hop = hostnameByPeerId[route.nextHopPeerId].orEmpty()
+                add("下一跳 ${if (hop.isNotBlank()) hop else "Peer ${route.nextHopPeerId}"}")
             }
-            append(" · cost ${route.cost}")
-            if (route.pathLatencyMs != 0) append(" · 延迟 ${route.pathLatencyMs}ms")
+            add("cost ${route.cost}")
+            if (route.pathLatencyMs != 0) add("延迟 ${route.pathLatencyMs}ms")
+            // 流量从连接明细行上移：多连接时按节点汇总（自连接建立起累计）
+            peer?.conns?.takeIf { it.isNotEmpty() }?.let { conns ->
+                add("↓${EasyTierSpec.formatBytes(conns.sumOf { it.rxBytes })} ↑${EasyTierSpec.formatBytes(conns.sumOf { it.txBytes })}")
+            }
         }
-        Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            parts.joinToString(" · "),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         peer?.conns?.forEach { conn -> ConnDetailLine(conn) }
     }
 }
@@ -332,19 +349,17 @@ private fun PeerOnlyBlock(peer: PeerDetail) {
 }
 
 /**
- * 单条连接明细行：隧道类型 → 对端地址 · 延迟 · 丢包 · ↓收 ↑发。
- * 直连/中继不再单独标注——路由条目的 cost 已能体现路径中转情况；
- * 丢包与流量恒定展示（0 表示无丢包/尚无流量）。
+ * 单条连接明细行：对端地址 · 延迟 · 丢包。
+ * 地址 URL 已含协议前缀（udp://、wss:// 等），不再单独展示隧道类型；无地址时才以隧道类型兜底。
+ * 累计收发流量上移至路由摘要行（按节点汇总）；直连/中继由 cost 体现。
  */
 @Composable
 private fun ConnDetailLine(conn: PeerConn) {
     val text = buildString {
         append("    ")
-        append(conn.tunnelType.ifBlank { "tunnel" })
-        conn.remoteAddr?.let { append(" → ").append(it) }
+        append(conn.remoteAddr ?: conn.tunnelType.ifBlank { "tunnel" })
         if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
         append(" · 丢包 ${"%.1f".format(conn.lossRate * 100)}%")
-        append(" · ↓${EasyTierSpec.formatBytes(conn.rxBytes)} ↑${EasyTierSpec.formatBytes(conn.txBytes)}")
     }
     Text(
         text,
