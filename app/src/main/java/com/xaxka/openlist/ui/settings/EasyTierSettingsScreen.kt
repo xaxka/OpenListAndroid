@@ -351,7 +351,8 @@ private fun PeerOnlyBlock(peer: PeerDetail) {
 
 /**
  * 单条连接明细行：对端地址 · 延迟 · 丢包（行首缩进 2 空格）。
- * 地址 URL 已含协议前缀（udp://、wss:// 等），不再单独展示隧道类型；无地址时才以隧道类型兜底。
+ * 字体与标题/摘要行保持一致（默认 sans）——等宽字体的空格与中文均为全宽，
+ * 视觉间隙偏大，与上两行不同步；地址已含协议前缀，无需等宽对齐。
  * 累计收发流量上移至节点标题行（按节点汇总）；直连/中继由 cost 体现。
  */
 @Composable
@@ -364,7 +365,7 @@ private fun ConnDetailLine(conn: PeerConn) {
     }
     Text(
         text,
-        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+        style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
