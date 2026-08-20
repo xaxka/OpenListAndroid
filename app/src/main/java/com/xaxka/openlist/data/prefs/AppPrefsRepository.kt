@@ -48,6 +48,7 @@ class AppPrefsRepository @Inject constructor(
         val EASYTIER_NETWORK_SECRET = stringPreferencesKey("easyTierNetworkSecret")
         val EASYTIER_PEER_URI = stringPreferencesKey("easyTierPeerUri")
         val EASYTIER_QUIC_PROXY = booleanPreferencesKey("easyTierQuicProxy")
+        val EASYTIER_SECURE_MODE = booleanPreferencesKey("easyTierSecureMode")
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -118,6 +119,9 @@ class AppPrefsRepository @Inject constructor(
     /** EasyTier QUIC 代理（enable_quic_proxy；把 TCP 流转为 QUIC 传输），默认开启 */
     val easytierQuicProxy: Flow<Boolean> = data.map { it[Keys.EASYTIER_QUIC_PROXY] ?: true }
 
+    /** EasyTier 安全模式（[secure_mode] enabled：E2EE + Noise 握手 + 防重放），默认关闭保持旧网络兼容 */
+    val easytierSecureMode: Flow<Boolean> = data.map { it[Keys.EASYTIER_SECURE_MODE] ?: false }
+
     // ---------- 写入 ----------
 
     suspend fun setSilentJumpApp(value: Boolean) = edit { it[Keys.SILENT_JUMP_APP] = value }
@@ -156,6 +160,8 @@ class AppPrefsRepository @Inject constructor(
     suspend fun setEasytierPeerUri(value: String) = edit { it[Keys.EASYTIER_PEER_URI] = value }
 
     suspend fun setEasytierQuicProxy(value: Boolean) = edit { it[Keys.EASYTIER_QUIC_PROXY] = value }
+
+    suspend fun setEasytierSecureMode(value: Boolean) = edit { it[Keys.EASYTIER_SECURE_MODE] = value }
 
     // ---------- 内部 ----------
 

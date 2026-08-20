@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -151,6 +152,13 @@ fun EasyTierSettingsScreen(
                     icon = Icons.Outlined.Speed,
                     value = state.easytierQuicProxy,
                     onCheckedChange = viewModel::setEasytierQuicProxy
+                )
+                SettingsSwitchPreference(
+                    title = "启用安全模式",
+                    subtitle = "secure_mode：节点间端到端加密（E2EE）+ Noise 握手 + 防重放；对端需开启并升级到支持安全模式的版本，变更需重启实例",
+                    icon = Icons.Outlined.Security,
+                    value = state.easytierSecureMode,
+                    onCheckedChange = viewModel::setEasytierSecureMode
                 )
 
                 SettingsDividerPreference("运行状态")

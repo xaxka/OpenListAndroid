@@ -199,15 +199,16 @@ class EasyTierManager @Inject constructor(
         val networkSecret = prefs.easytierNetworkSecret.first()
         val peerUri = prefs.easytierPeerUri.first()
         val quicProxy = prefs.easytierQuicProxy.first()
+        val secureMode = prefs.easytierSecureMode.first()
         val effectiveNetwork = networkName.ifBlank { EasyTierSpec.DEFAULT_NETWORK_NAME }
-        val toml = EasyTierSpec.buildToml(networkName, networkSecret, peerUri, enableQuicProxy = quicProxy)
-        displayToml = EasyTierSpec.buildDisplayToml(networkName, networkSecret, peerUri, quicProxy)
+        val toml = EasyTierSpec.buildToml(networkName, networkSecret, peerUri, enableQuicProxy = quicProxy, secureMode = secureMode)
+        displayToml = EasyTierSpec.buildDisplayToml(networkName, networkSecret, peerUri, quicProxy, secureMode)
 
         // 密钥不落日志（展示 TOML 已脱敏）
         log(
             LoggableLevel.INFO,
             "启动内网映射：network=$effectiveNetwork, peer=${if (peerUri.isBlank()) "（未配置）" else peerUri}, " +
-                "quicProxy=$quicProxy（no-tun：虚拟 IP 任意端口直达本机同端口）",
+                "quicProxy=$quicProxy, secureMode=$secureMode（no-tun：虚拟 IP 任意端口直达本机同端口）",
         )
 
         transition(Status(Phase.STARTING))

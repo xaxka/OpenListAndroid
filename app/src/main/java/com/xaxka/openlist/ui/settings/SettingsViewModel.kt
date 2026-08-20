@@ -73,6 +73,7 @@ class SettingsViewModel @Inject constructor(
         val easytierNetworkSecret: String = "",
         val easytierPeerUri: String = "",
         val easytierQuicProxy: Boolean = true,
+        val easytierSecureMode: Boolean = false,
         val easytierStatus: String = "",
         val easytierDetail: EasyTierManager.Status = EasyTierManager.Status()
     )
@@ -109,6 +110,7 @@ class SettingsViewModel @Inject constructor(
         prefs.easytierNetworkSecret,
         prefs.easytierPeerUri,
         prefs.easytierQuicProxy,
+        prefs.easytierSecureMode,
         easyTier.state
     ) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -131,8 +133,9 @@ class SettingsViewModel @Inject constructor(
             easytierNetworkSecret = values[15] as String,
             easytierPeerUri = values[16] as String,
             easytierQuicProxy = values[17] as Boolean,
-            easytierStatus = (values[18] as EasyTierManager.Status).summary,
-            easytierDetail = values[18] as EasyTierManager.Status
+            easytierSecureMode = values[18] as Boolean,
+            easytierStatus = (values[19] as EasyTierManager.Status).summary,
+            easytierDetail = values[19] as EasyTierManager.Status
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -233,6 +236,25 @@ class SettingsViewModel @Inject constructor(
                 easyTier.restart()
             } else {
                 snack(if (value) "QUIC 代理已启用，重开内网映射开关或重启服务后生效" else "QUIC 代理已停用，重开内网映射开关或重启服务后生效")
+            }
+        }
+    }
+
+    /**
+     * 安全模式（[secure_mode] enabled：E2EE + Noise 握手 + 防重放）：
+     * 写入启动 TOML，属启动期配置，运行中切换立即重启实例；
+     * 对端节点也需开启并升级到支持安全模式的版本才能互联。
+     */
+    fun setEasytierSecureMode(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setEasytierSecureMode(value)
+            val running = serverManager.state.value == ServerState.RUNNING &&
+                prefs.easytierEnabled.first()
+            if (running) {
+                snack(if (value) "安全模式已启用，正在重启内网映射…" else "安全模式已停用，正在重启内网映射…")
+                easyTier.restart()
+            } else {
+                snack(if (value) "安全模式已启用，重开内网映射开关或重启服务后生效" else "安全模式已停用，重开内网映射开关或重启服务后生效")
             }
         }
     }

@@ -12,6 +12,7 @@ package com.xaxka.openlist.easytier
  * TOML 字段对照 easytier-core/src/config/toml.rs（Config 结构）：
  * - 顶层 instance_name / hostname / dhcp
  * - [network_identity] network_name / network_secret
+ * - [secure_mode] enabled（安全模式：E2EE + Noise 握手 + 防重放，对照官方文档 secure-mode）
  * - [[peer]] uri（多条可重复，本模板仅暴露一条）
  * - [flags] no_tun / enable_quic_proxy（均位于 FlagsInConfig，非顶层字段）
  */
@@ -40,12 +41,15 @@ object EasyTierSpec {
      * @param networkSecret 网络密钥（允许空字符串）
      * @param peerUri 对等节点 URI；空白则不生成 [[peer]]（单机直连场景也合法）
      * @param enableQuicProxy 是否启用 QUIC 代理（[flags] enable_quic_proxy，把 TCP 流转为 QUIC）
+     * @param secureMode 是否启用安全模式（[secure_mode] enabled：E2EE + Noise 握手 + 防重放；
+     * 对端节点也需开启并升级到支持安全模式的版本，默认关闭保持旧网络兼容）
      */
     fun buildToml(
         networkName: String,
         networkSecret: String,
         peerUri: String,
         enableQuicProxy: Boolean = false,
+        secureMode: Boolean = false,
     ): String {
         val effectiveNetwork = networkName.ifBlank { DEFAULT_NETWORK_NAME }
         val sb = StringBuilder()
@@ -56,6 +60,12 @@ object EasyTierSpec {
         sb.append("[network_identity]\n")
         sb.append("network_name = ").append(tomlString(effectiveNetwork)).append('\n')
         sb.append("network_secret = ").append(tomlString(networkSecret)).append("\n\n")
+
+        if (secureMode) {
+            // 对照官方文档 secure-mode：[secure_mode] enabled，节点间独立协商端到端加密密钥
+            sb.append("[secure_mode]\n")
+            sb.append("enabled = true\n\n")
+        }
 
         sb.append("[flags]\n")
         sb.append("no_tun = ").append(NO_TUN).append('\n')
@@ -82,9 +92,10 @@ object EasyTierSpec {
         networkSecret: String,
         peerUri: String,
         enableQuicProxy: Boolean,
+        secureMode: Boolean = false,
     ): String {
         val maskedSecret = if (networkSecret.isBlank()) networkSecret else SECRET_MASKED
-        return buildToml(networkName, maskedSecret, peerUri, enableQuicProxy)
+        return buildToml(networkName, maskedSecret, peerUri, enableQuicProxy, secureMode)
     }
 
     /** Ipv4Addr.addr（uint32 大端）→ 点分十进制。 */

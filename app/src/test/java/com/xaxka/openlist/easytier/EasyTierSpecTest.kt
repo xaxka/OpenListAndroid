@@ -96,6 +96,30 @@ class EasyTierSpecTest {
     }
 
     @Test
+    fun `启用安全模式时写入secure_mode段`() {
+        // 对照官方文档 secure-mode：[secure_mode] enabled = true
+        val on = EasyTierSpec.buildToml("net", "", "", secureMode = true)
+        assertTrue(on.contains("[secure_mode]"))
+        assertTrue(on.contains("enabled = true"))
+    }
+
+    @Test
+    fun `安全模式缺省与显式关闭均不写入secure_mode段`() {
+        // 缺省关闭：保持旧网络兼容（安全模式客户端连不上旧服务端）
+        assertFalse(EasyTierSpec.buildToml("net", "", "").contains("secure_mode"))
+        assertFalse(EasyTierSpec.buildToml("net", "", "", secureMode = false).contains("secure_mode"))
+    }
+
+    @Test
+    fun `安全模式与QUIC代理可同时开启`() {
+        val toml = EasyTierSpec.buildToml("net", "s3cret", "tcp://1.2.3.4:11010", enableQuicProxy = true, secureMode = true)
+        assertTrue(toml.contains("[secure_mode]"))
+        assertTrue(toml.contains("enabled = true"))
+        assertTrue(toml.contains("enable_quic_proxy = true"))
+        assertTrue(toml.contains("""uri = "tcp://1.2.3.4:11010""""))
+    }
+
+    @Test
     fun `展示配置对密钥脱敏`() {
         val display = EasyTierSpec.buildDisplayToml("net", "s3cret", "", enableQuicProxy = true)
         assertFalse(display.contains("s3cret"))
@@ -103,5 +127,9 @@ class EasyTierSpecTest {
         // 空白密钥保持空白（显示为 network_secret = ""）
         val displayBlank = EasyTierSpec.buildDisplayToml("net", "", "", enableQuicProxy = false)
         assertTrue(displayBlank.contains("network_secret = \"\""))
+        // 安全模式状态在展示配置中原样透出
+        val displaySecure = EasyTierSpec.buildDisplayToml("net", "s3cret", "", enableQuicProxy = false, secureMode = true)
+        assertTrue(displaySecure.contains("[secure_mode]"))
+        assertFalse(displaySecure.contains("s3cret"))
     }
 }
