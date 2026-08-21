@@ -54,7 +54,7 @@ class EasyTierManager @Inject constructor(
 ) {
     companion object {
         private const val TAG = "EasyTier"
-        private const val POLL_INTERVAL_MS = 4000L
+        private const val POLL_INTERVAL_MS = 5_000L
         private const val COLLECT_MAX = 16
 
         /** collectNetworkInfos 连续 N 轮找不到本实例 → 判定实例丢失（冻结/清理），自动重启。 */
@@ -65,10 +65,10 @@ class EasyTierManager @Inject constructor(
 
         /**
          * 曾连上节点后连续 N 轮无任何对等节点 → 判定与初始节点静默断连，自动重启自愈。
-         * 32 秒（8 轮 × 4 秒）宽限期：网络切换后核心正常重连通常数秒完成，
+         * 30 秒（6 轮 × 5 秒）宽限期：网络切换后核心正常重连通常数秒完成，
          * 期间不计入（peerCount > 0 即清零），只有真正僵死才触发重启。
          */
-        private const val PEER_LOST_RESTART_THRESHOLD = 8
+        private const val PEER_LOST_RESTART_THRESHOLD = 6
 
         /** 事件日志最多保留条数（状态页只读展示）。 */
         private const val EVENTS_KEEP = 200
