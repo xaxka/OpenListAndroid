@@ -1,9 +1,14 @@
 package com.xaxka.openlist.easytier
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
 import com.easytier.jni.EasyTierJNI
 import com.xaxka.openlist.data.log.LogBuffer
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -32,12 +37,18 @@ import com.xaxka.openlist.data.log.ServerLog
  * App 回前台时由 [ensureRecovered] 校验实例存活（应对 OPPO 等厂商后台冻结/清理后
  * 实例丢失、恢复前台却无法自愈的问题）。
  *
+ * 后台断连自愈：实例 running 但与初始节点静默断连（NAT 超时/网络切换/休眠后
+ * 套接字僵死，核心侧重连失败）时状态会长期停留「运行中·0 节点」；
+ * 曾连上后持续无节点达到 [PEER_LOST_RESTART_THRESHOLD] 轮即自动重启，
+ * 并监听系统网络变化事件（Wi-Fi/移动网络切换）立即轮询加速检测。
+ *
  * 无需下发端口转发规则：EasyTier no-tun 模式下，核心的代理引擎会把组网设备发往本机
  * 虚拟 IP 的 TCP/UDP/ICMP 包自动落到本机回环同端口，即 <虚拟IP>:5244 直达 OpenList。
  * 本类只负责实例生命周期、状态轮询与自愈。
  */
 @Singleton
 class EasyTierManager @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     private val prefs: AppPrefsRepository,
     private val logBuffer: LogBuffer,
 ) {
@@ -51,6 +62,13 @@ class EasyTierManager @Inject constructor(
 
         /** 实例连续 N 轮上报异常（running=false）→ 自动重启自愈。 */
         private const val ERROR_RESTART_THRESHOLD = 5
+
+        /**
+         * 曾连上节点后连续 N 轮无任何对等节点 → 判定与初始节点静默断连，自动重启自愈。
+         * 60 秒（15 轮 × 4 秒）宽限期：网络切换后核心正常重连通常数秒完成，
+         * 期间不计入（peerCount > 0 即清零），只有真正僵死才触发重启。
+         */
+        private const val PEER_LOST_RESTART_THRESHOLD = 15
 
         /** 事件日志最多保留条数（状态页只读展示）。 */
         private const val EVENTS_KEEP = 200
@@ -117,6 +135,20 @@ class EasyTierManager @Inject constructor(
 
     /** 实例连续上报 running=false 的轮数。 */
     private var errorStreak = 0
+
+    /** 本次启动是否配置了初始节点（未配置则 0 节点属正常，不做断连自愈）。 */
+    @Volatile
+    private var peerConfigured = false
+
+    /** 本次启动后是否曾成功连上过对等节点（区分「未连过」与「连过又断」）。 */
+    @Volatile
+    private var hadConnectedOnce = false
+
+    /** 实例运行中连续无任何对等节点的轮数（仅连过之后才统计）。 */
+    private var peerLostStreak = 0
+
+    /** 系统网络变化回调（网络切换 → 立即轮询；实例启动期间注册，停止时注销）。 */
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     /** 最近一次启动使用的脱敏 TOML（状态页「启动配置」展示）。 */
     private var displayToml = ""
@@ -245,8 +277,12 @@ class EasyTierManager @Inject constructor(
         instanceStarted = true
         missingStreak = 0
         errorStreak = 0
+        peerConfigured = peerUri.isNotBlank()
+        hadConnectedOnce = false
+        peerLostStreak = 0
         transition(Status(Phase.RUNNING, detail = "正在连接网络"))
         log(LoggableLevel.INFO, "EasyTier 实例已启动（${EasyTierSpec.INSTANCE_NAME}，no-tun）")
+        registerNetworkCallback()
         startMonitor()
     }
 
@@ -304,7 +340,11 @@ class EasyTierManager @Inject constructor(
         instanceStarted = false
         missingStreak = 0
         errorStreak = 0
+        peerConfigured = false
+        hadConnectedOnce = false
+        peerLostStreak = 0
         displayToml = ""
+        unregisterNetworkCallback()
         transition(Status(Phase.STOPPED))
         log(LoggableLevel.INFO, "EasyTier 实例已停止")
     }
@@ -333,6 +373,43 @@ class EasyTierManager @Inject constructor(
     private fun stopMonitor() {
         monitorJob?.cancel()
         monitorJob = null
+    }
+
+    /**
+     * 注册系统网络变化回调：Wi-Fi/移动网络切换后旧连接必然失效，
+     * onAvailable 时立即轮询一次，加速断连检测与状态对齐（重启判定仍由轮询节拍驱动）。
+     */
+    private fun registerNetworkCallback() {
+        if (networkCallback != null) return
+        val manager =
+            appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                scope.launch {
+                    lock.withLock {
+                        if (instanceStarted) pollStatusLocked()
+                    }
+                }
+            }
+        }
+        val request = NetworkRequest.Builder().build()
+        runCatching {
+            manager.registerNetworkCallback(request, callback)
+            networkCallback = callback
+        }.onFailure {
+            log(LoggableLevel.WARN, "网络变化监听注册失败：${it.message}")
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        runCatching {
+            val manager =
+                appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            manager?.unregisterNetworkCallback(callback)
+        }
     }
 
     /**
@@ -380,11 +457,28 @@ class EasyTierManager @Inject constructor(
         }
         errorStreak = 0
 
+        // 后台断连自愈：实例 running 但 0 节点。未配置初始节点时 0 节点属正常；
+        // 连上后又持续无节点（NAT 超时/网络切换/休眠后套接字僵死，核心重连失败），
+        // 达到阈值即重启自愈，避免状态永远停留「运行中·0 节点」。
+        if (info.peerCount > 0) {
+            hadConnectedOnce = true
+            peerLostStreak = 0
+        } else if (peerConfigured && hadConnectedOnce) {
+            peerLostStreak++
+            if (instanceStarted && peerLostStreak >= PEER_LOST_RESTART_THRESHOLD) {
+                restartLocked("与初始节点连接持续中断 ${peerLostStreak * POLL_INTERVAL_MS / 1000} 秒")
+                return
+            }
+        } else {
+            peerLostStreak = 0
+        }
+        val lostDetail = if (peerLostStreak > 0) "与初始节点连接中断，自动恢复中" else ""
+
         val next = Status(
             Phase.RUNNING,
             virtualIpv4 = info.ipv4,
             peerCount = info.peerCount,
-            detail = "",
+            detail = lostDetail,
             myNode = info.myNode,
             peers = info.peers,
             routes = info.routes,
