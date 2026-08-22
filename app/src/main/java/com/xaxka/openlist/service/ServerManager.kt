@@ -134,12 +134,6 @@ class ServerManager @Inject constructor(
                 }
             }
         }
-        // EasyTier 运行日志并入主页日志流（data.log.ServerLog → service.ServerLog）
-        scope.launch {
-            easyTier.logs.collect { entry ->
-                _logs.tryEmit(ServerLog(entry.level, formatTime(entry.time), "${entry.tag}｜${entry.message}"))
-            }
-        }
         // 内核版本（assets/openlist_version，当前 v4.2.5）
         scope.launch(Dispatchers.IO) {
             val version = runCatching {

@@ -6,7 +6,6 @@ import android.net.Network
 import android.net.NetworkRequest
 import com.easytier.jni.EasyTierJNI
 import com.xaxka.openlist.data.log.EasyTierEventLog
-import com.xaxka.openlist.data.log.LogBuffer
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -17,18 +16,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import com.xaxka.openlist.data.log.ServerLog
 
 /**
  * EasyTier 内网映射引擎（no-tun，无 Android VPN 服务）。
@@ -51,11 +46,9 @@ import com.xaxka.openlist.data.log.ServerLog
 class EasyTierManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val prefs: AppPrefsRepository,
-    private val logBuffer: LogBuffer,
     private val eventLog: EasyTierEventLog,
 ) {
     companion object {
-        private const val TAG = "EasyTier"
         private const val POLL_INTERVAL_MS = 5_000L
         private const val COLLECT_MAX = 16
 
@@ -78,7 +71,7 @@ class EasyTierManager @Inject constructor(
     /**
      * UI 快照：phase + 虚拟 IPv4 + 已连节点数 + 说明文本，
      * 以及状态页所需的只读明细（本节点/对等节点/路由/启动配置脱敏文本）。
-     * 事件日志不再随状态携带，改由 [emitNewEvents] 增量导出到应用日志。
+     * 事件日志不再随状态携带，改由 [emitNewEvents] 增量写入 EasyTier 专属事件日记（不进 OpenList 日志）。
      */
     data class Status(
         val phase: Phase = Phase.STOPPED,
@@ -120,11 +113,6 @@ class EasyTierManager @Inject constructor(
 
     private val _state = MutableStateFlow(Status())
     val state: StateFlow<Status> = _state.asStateFlow()
-
-    private val _logs = MutableSharedFlow<ServerLog>(extraBufferCapacity = 64)
-
-    /** EasyTier 运行日志（ServerManager 汇入主页日志流）。 */
-    val logs: SharedFlow<ServerLog> = _logs.asSharedFlow()
 
     @Volatile
     private var instanceStarted = false
@@ -505,9 +493,12 @@ class EasyTierManager @Inject constructor(
     private fun lastError(fallback: String): String =
         runCatching { EasyTierJNI.getLastError() }.getOrNull()?.takeIf { it.isNotBlank() } ?: fallback
 
+    /**
+     * EasyTier 自身运行日志（启动/停止/重启/异常/网络变化）：
+     * 只写入 EasyTier 专属事件日记（[eventLog]，24h 落盘），不进 OpenList 日志面板。
+     */
     private fun log(level: LoggableLevel, message: String) {
-        logBuffer.append(level, TAG, message)
-        _logs.tryEmit(ServerLog(time = System.currentTimeMillis(), level = level, tag = TAG, message = message))
+        eventLog.append("[${level.label}] $message")
     }
 
     /**
