@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
 import com.easytier.jni.EasyTierJNI
+import com.xaxka.openlist.data.log.EasyTierEventLog
 import com.xaxka.openlist.data.log.LogBuffer
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
@@ -51,6 +52,7 @@ class EasyTierManager @Inject constructor(
     @ApplicationContext private val appContext: Context,
     private val prefs: AppPrefsRepository,
     private val logBuffer: LogBuffer,
+    private val eventLog: EasyTierEventLog,
 ) {
     companion object {
         private const val TAG = "EasyTier"
@@ -509,13 +511,16 @@ class EasyTierManager @Inject constructor(
     }
 
     /**
-     * 把核心侧事件日志增量导出到应用日志（LogBuffer + 主页日志流）。
+     * 把核心侧事件日志增量导出到应用日志：
+     * - 实时流：[log] 写入 LogBuffer + 主页日志流（内存 500 环，进程内可见）；
+     * - 持久化：[eventLog] 追加到 easytier/events.log，保留最近 24h，跨实例/进程重启不丢，
+     *   用于排查掉线看门狗重启等场景（实例重建后内存侧复位，文件侧仍可回看）。
      *
      * 事件按发生顺序追加，每轮只导出相对上一轮新增的尾部事件，避免每 5s 重复打全量：
      * - 增长（上一轮是本轮前缀，含重复事件文本也安全）：增量为本轮尾部；
      * - 核心侧裁剪了旧事件（上一轮末尾已不在本轮头部）：按上一轮最后一条定位增量，
      *   定位不到（已被裁剪，仅高频事件偶发）则补打全量。
-     * 实例停止时 [stopLocked] 复位 [prevEvents]，下次启动按新实例从头导出。
+     * 实例停止时 [stopLocked] 复位 [prevEvents]，下次启动按新实例从头导出（文件日记保留）。
      */
     private fun emitNewEvents(events: List<String>) {
         if (events.isEmpty()) {
@@ -532,7 +537,9 @@ class EasyTierManager @Inject constructor(
             }
         }
         for (i in start until events.size) {
+            // 实时日志流（主页日志面板，内存 500 环）+ 24h 持久化日记（跨重启不丢）
             log(LoggableLevel.INFO, "[事件] ${events[i]}")
+            eventLog.append(events[i])
         }
         prevEvents = events
     }
