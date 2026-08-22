@@ -8,29 +8,25 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.xaxka.openlist.easytier.EasyTierManager
 import com.xaxka.openlist.easytier.MyNodeInfo
-import com.xaxka.openlist.ui.theme.Dimens
 
 /**
  * 设置子页面：内网映射「映射状态」详情页。
  * 由内网映射页点击「映射状态」条目进入（内容较多，单独成页）；返回由顶栏按钮与系统回退支持。
  *
- * 承载本节点信息与事件日志：
- * - 本节点来自 collectNetworkInfos 的最近一次解析快照，随轮询自动刷新；
- * - 事件日志全量倒序（最新置顶），核心侧保留上限 200 条。
+ * 承载本节点信息：来自 collectNetworkInfos 的最近一次解析快照，随轮询自动刷新。
+ * 事件日志不再在此面板展示，改由 EasyTierManager 增量导出到应用日志（见主页日志流）。
  */
 @Composable
 fun EasyTierStatusDetailScreen(
@@ -62,36 +58,6 @@ fun EasyTierStatusDetailScreen(
                     phase != EasyTierManager.Phase.UNAVAILABLE
                 ) {
                     detail.myNode?.let { node -> MyNodeBlock(node) }
-                }
-
-                // ---- 事件日志 ----
-                if (detail.events.isEmpty()) {
-                    Text(
-                        "暂无事件（实例未启动，或尚未上报事件）",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(
-                            horizontal = Dimens.PageMargin,
-                            vertical = 12.dp
-                        )
-                    )
-                } else {
-                    StatusCard("事件日志（${detail.events.size}）") {
-                        SelectionContainer {
-                            Column {
-                                // 最新事件置顶，便于直接看到最近动态
-                                detail.events.asReversed().forEach { event ->
-                                    Text(
-                                        event,
-                                        style = MaterialTheme.typography.bodySmall
-                                            .copy(fontFamily = FontFamily.Monospace),
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(vertical = 1.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }

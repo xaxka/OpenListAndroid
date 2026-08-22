@@ -73,7 +73,8 @@ private const val NODES_DISPLAY_LIMIT = 20
  * 设置子页面：内网映射（EasyTier，no-tun 不使用 VPN）。
  * 内容自设置主页面拆分而来；返回键由顶栏按钮与系统回退共同支持（NavHost 栈）。
  *
- * 下半部分为只读「运行状态」区：映射状态（点击进入详情页：本节点 + 事件日志）、网络节点、启动配置。
+ * 下半部分为只读「运行状态」区：映射状态（点击进入详情页：本节点）、网络节点、启动配置。
+ * 事件日志不再展示，改由 EasyTierManager 增量导出到应用日志（汇入主页日志流）。
  */
 @Composable
 fun EasyTierSettingsScreen(
@@ -264,7 +265,8 @@ fun EasyTierSettingsScreen(
 
 /**
  * 只读运行状态区：网络节点（路由/对等合并）。
- * 本节点与事件日志内容较多，拆到「映射状态」详情页（见 EasyTierStatusDetailScreen）。
+ * 本节点内容较多，拆到「映射状态」详情页（见 EasyTierStatusDetailScreen）；
+ * 事件日志已改为增量导出到应用日志，不再在界面展示。
  * 数据均来自 collectNetworkInfos 的最近一次解析快照，随轮询自动刷新。
  */
 @Composable

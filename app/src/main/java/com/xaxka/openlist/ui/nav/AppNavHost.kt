@@ -53,7 +53,7 @@ object Routes {
     const val SETTINGS_VIDEOHASH = "settings/videohash"
     const val SETTINGS_EASYTIER = "settings/easytier"
 
-    /** 内网映射「映射状态」详情页：本节点 + 事件日志（点「映射状态」进入，返回回到内网映射页） */
+    /** 内网映射「映射状态」详情页：本节点（点「映射状态」进入，返回回到内网映射页） */
     const val SETTINGS_EASYTIER_STATUS = "settings/easytier/status"
 }
 

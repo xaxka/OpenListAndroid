@@ -69,16 +69,14 @@ class EasyTierManager @Inject constructor(
          * 期间不计入（peerCount > 0 即清零），只有真正僵死才触发重启。
          */
         private const val PEER_LOST_RESTART_THRESHOLD = 6
-
-        /** 事件日志最多保留条数（状态页只读展示）。 */
-        private const val EVENTS_KEEP = 200
     }
 
     enum class Phase { STOPPED, STARTING, RUNNING, ERROR, UNAVAILABLE }
 
     /**
      * UI 快照：phase + 虚拟 IPv4 + 已连节点数 + 说明文本，
-     * 以及状态页所需的只读明细（本节点/对等节点/路由/事件日志/启动配置脱敏文本）。
+     * 以及状态页所需的只读明细（本节点/对等节点/路由/启动配置脱敏文本）。
+     * 事件日志不再随状态携带，改由 [emitNewEvents] 增量导出到应用日志。
      */
     data class Status(
         val phase: Phase = Phase.STOPPED,
@@ -88,7 +86,6 @@ class EasyTierManager @Inject constructor(
         val myNode: MyNodeInfo? = null,
         val peers: List<PeerDetail> = emptyList(),
         val routes: List<RouteDetail> = emptyList(),
-        val events: List<String> = emptyList(),
         val startupToml: String = "",
     ) {
         val summary: String
@@ -152,6 +149,10 @@ class EasyTierManager @Inject constructor(
 
     /** 最近一次启动使用的脱敏 TOML（状态页「启动配置」展示）。 */
     private var displayToml = ""
+
+    /** 上一轮已导出的事件快照，用于本轮增量定位新事件（避免每轮重复打全量）。 */
+    @Volatile
+    private var prevEvents: List<String> = emptyList()
 
     @Volatile
     private var monitorJob: Job? = null
@@ -344,6 +345,7 @@ class EasyTierManager @Inject constructor(
         hadConnectedOnce = false
         peerLostStreak = 0
         displayToml = ""
+        prevEvents = emptyList()
         unregisterNetworkCallback()
         transition(Status(Phase.STOPPED))
         log(LoggableLevel.INFO, "EasyTier 实例已停止")
@@ -441,6 +443,9 @@ class EasyTierManager @Inject constructor(
         }
         missingStreak = 0
 
+        // 事件日志增量导出到应用日志（状态页不再展示，统一汇入主页日志流）
+        emitNewEvents(info.events)
+
         if (!info.running) {
             // 实例自报异常：先透出错误，持续异常则重启自愈
             errorStreak++
@@ -450,7 +455,7 @@ class EasyTierManager @Inject constructor(
                 return
             }
             if (_state.value.phase != Phase.ERROR || _state.value.detail != msg) {
-                transition(Status(Phase.ERROR, detail = msg, events = info.events.takeLast(EVENTS_KEEP)))
+                transition(Status(Phase.ERROR, detail = msg))
                 log(LoggableLevel.ERROR, "EasyTier 实例异常：$msg")
             }
             return
@@ -482,7 +487,6 @@ class EasyTierManager @Inject constructor(
             myNode = info.myNode,
             peers = info.peers,
             routes = info.routes,
-            events = info.events.takeLast(EVENTS_KEEP),
         )
         if (next != _state.value) transition(next)
     }
@@ -502,5 +506,34 @@ class EasyTierManager @Inject constructor(
     private fun log(level: LoggableLevel, message: String) {
         logBuffer.append(level, TAG, message)
         _logs.tryEmit(ServerLog(time = System.currentTimeMillis(), level = level, tag = TAG, message = message))
+    }
+
+    /**
+     * 把核心侧事件日志增量导出到应用日志（LogBuffer + 主页日志流）。
+     *
+     * 事件按发生顺序追加，每轮只导出相对上一轮新增的尾部事件，避免每 5s 重复打全量：
+     * - 增长（上一轮是本轮前缀，含重复事件文本也安全）：增量为本轮尾部；
+     * - 核心侧裁剪了旧事件（上一轮末尾已不在本轮头部）：按上一轮最后一条定位增量，
+     *   定位不到（已被裁剪，仅高频事件偶发）则补打全量。
+     * 实例停止时 [stopLocked] 复位 [prevEvents]，下次启动按新实例从头导出。
+     */
+    private fun emitNewEvents(events: List<String>) {
+        if (events.isEmpty()) {
+            prevEvents = emptyList()
+            return
+        }
+        val prev = prevEvents
+        val start = when {
+            prev.isEmpty() -> 0
+            events.size >= prev.size && prev == events.subList(0, prev.size) -> prev.size
+            else -> {
+                val idx = events.lastIndexOf(prev.last())
+                if (idx >= 0) idx + 1 else 0
+            }
+        }
+        for (i in start until events.size) {
+            log(LoggableLevel.INFO, "[事件] ${events[i]}")
+        }
+        prevEvents = events
     }
 }
