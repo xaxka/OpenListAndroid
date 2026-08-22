@@ -1,5 +1,7 @@
 package com.xaxka.openlist.ui.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Visibility
@@ -41,11 +44,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -63,8 +68,10 @@ import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.theme.InputHint
 import com.xaxka.openlist.ui.theme.InputLabel
 import com.xaxka.openlist.ui.theme.ShapeInputOutlineR4
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 网络节点在设置页的最大展示条数。 */
 private const val NODES_DISPLAY_LIMIT = 20
@@ -88,6 +95,28 @@ fun EasyTierSettingsScreen(
     var showSecretDialog by remember { mutableStateOf(false) }
     var showPeerDialog by remember { mutableStateOf(false) }
     var showTomlDialog by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // 导出事件日记：系统「另存为」选择目标，把最近 24h 事件写到用户指定文件
+    val exportDiaryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                val text = viewModel.eventDiaryText()
+                if (text.isEmpty()) return@withContext false
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { os ->
+                        os.write(text.toByteArray())
+                    } ?: return@runCatching false
+                    true
+                }.getOrDefault(false)
+            }
+            viewModel.snack(if (ok) "事件日记已导出" else "暂无事件日记可导出")
+        }
+    }
 
     // Snackbar 事件：与设置主页面相同的 GetSnackBar 复刻
     LaunchedEffect(viewModel) {
@@ -181,6 +210,13 @@ fun EasyTierSettingsScreen(
                 )
 
                 EasyTierStatusSection(detail = state.easytierDetail)
+
+                SettingsBasicPreference(
+                    title = "导出事件日记",
+                    subtitle = "保存最近 24 小时事件到文件（跨重启不丢）",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.SaveAlt) },
+                    onTap = { exportDiaryLauncher.launch("easytier-events.txt") }
+                )
 
                 SettingsBasicPreference(
                     title = "启动配置",

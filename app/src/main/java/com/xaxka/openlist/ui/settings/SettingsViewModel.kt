@@ -7,6 +7,7 @@ import android.os.Environment
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.xaxka.openlist.data.log.EasyTierEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
 import com.xaxka.openlist.service.ServerManager
@@ -38,6 +39,7 @@ class SettingsViewModel @Inject constructor(
     private val prefs: AppPrefsRepository,
     private val easyTier: EasyTierManager,
     private val serverManager: ServerManager,
+    private val eventLog: EasyTierEventLog,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -236,6 +238,9 @@ class SettingsViewModel @Inject constructor(
             easyTier.restart()
         }
     }
+
+    /** 读取 EasyTier 事件日记（最近 24h，旧→新原始文本），供「导出事件日记」写出。 */
+    fun eventDiaryText(): String = eventLog.readRecent()
 
     /** 网络名称/密钥/对端 URI：保存后需重启服务（或重开总开关）生效。 */
     fun setEasytierNetwork(value: String) = setEasytierText(prefs::setEasytierNetwork, value, "网络名称")
