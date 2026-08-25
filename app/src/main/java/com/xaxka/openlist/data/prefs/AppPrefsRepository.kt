@@ -11,9 +11,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
 import javax.inject.Inject
@@ -39,10 +36,6 @@ class AppPrefsRepository @Inject constructor(
         val DARK_MODE = booleanPreferencesKey("darkMode")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamicColor")
         val DATA_DIR = stringPreferencesKey("dataDir")
-        val VIDEO_HASH_SUFFIX = stringPreferencesKey("videoHashSuffix")
-        val VIDEO_HASH_DIRS = stringPreferencesKey("videoHashDirs")
-        val VIDEO_HASH_RUNNING = booleanPreferencesKey("videoHashRunning")
-        val VIDEO_HASH_STATUS = stringPreferencesKey("videoHashStatus")
         val EASYTIER_ENABLED = booleanPreferencesKey("isEasyTierEnabled")
         val EASYTIER_NETWORK = stringPreferencesKey("easyTierNetwork")
         val EASYTIER_NETWORK_SECRET = stringPreferencesKey("easyTierNetworkSecret")
@@ -52,8 +45,6 @@ class AppPrefsRepository @Inject constructor(
         val EASYTIER_LOCAL_PRIVATE_KEY = stringPreferencesKey("easyTierLocalPrivateKey")
         val EASYTIER_LOCAL_PUBLIC_KEY = stringPreferencesKey("easyTierLocalPublicKey")
     }
-
-    private val json = Json { ignoreUnknownKeys = true }
 
     /** 默认数据目录：getExternalFilesDir("data") 绝对路径（不可用时回退 filesDir/data） */
     val defaultDataDir: String =
@@ -91,20 +82,6 @@ class AppPrefsRepository @Inject constructor(
     val dataDir: Flow<String> = data.map { raw ->
         (raw[Keys.DATA_DIR] ?: defaultDataDir).ifBlank { defaultDataDir }
     }
-
-    /** 视频洗码追加文字 */
-    val videoHashSuffix: Flow<String> = data.map { it[Keys.VIDEO_HASH_SUFFIX] ?: "HashMod" }
-
-    /** 视频洗码监听目录（JSON 数组存储，解析失败回空列表） */
-    val videoHashDirs: Flow<List<String>> = data.map { raw ->
-        decodeDirs(raw[Keys.VIDEO_HASH_DIRS] ?: "")
-    }
-
-    /** 洗码任务运行标志（Worker 维护，供 UI 轮询） */
-    val videoHashRunning: Flow<Boolean> = data.map { it[Keys.VIDEO_HASH_RUNNING] ?: false }
-
-    /** 最近一次洗码/还原结果文本 */
-    val videoHashStatus: Flow<String> = data.map { it[Keys.VIDEO_HASH_STATUS] ?: "" }
 
     /** EasyTier 内网映射总开关（默认关闭） */
     val easytierEnabled: Flow<Boolean> = data.map { it[Keys.EASYTIER_ENABLED] ?: false }
@@ -149,16 +126,6 @@ class AppPrefsRepository @Inject constructor(
     /** 写入数据目录；空白回退默认值（源 AppConfig.kt setter 行为） */
     suspend fun setDataDir(value: String) = edit { it[Keys.DATA_DIR] = value.ifBlank { defaultDataDir } }
 
-    suspend fun setVideoHashSuffix(value: String) = edit { it[Keys.VIDEO_HASH_SUFFIX] = value }
-
-    suspend fun setVideoHashDirs(value: List<String>) = edit {
-        it[Keys.VIDEO_HASH_DIRS] = json.encodeToString(ListSerializer(String.serializer()), value)
-    }
-
-    suspend fun setVideoHashRunning(value: Boolean) = edit { it[Keys.VIDEO_HASH_RUNNING] = value }
-
-    suspend fun setVideoHashStatus(value: String) = edit { it[Keys.VIDEO_HASH_STATUS] = value }
-
     suspend fun setEasytierEnabled(value: Boolean) = edit { it[Keys.EASYTIER_ENABLED] = value }
 
     suspend fun setEasytierNetwork(value: String) = edit { it[Keys.EASYTIER_NETWORK] = value }
@@ -176,15 +143,6 @@ class AppPrefsRepository @Inject constructor(
     suspend fun setEasytierLocalPublicKey(value: String) = edit { it[Keys.EASYTIER_LOCAL_PUBLIC_KEY] = value }
 
     // ---------- 内部 ----------
-
-    private fun decodeDirs(raw: String): List<String> {
-        if (raw.isBlank()) return emptyList()
-        return try {
-            json.decodeFromString(ListSerializer(String.serializer()), raw)
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {
         context.openlistPrefs.edit { block(it) }

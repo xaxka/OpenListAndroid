@@ -26,7 +26,6 @@ import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Memory
-import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanToolAlt
@@ -55,7 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.xaxka.openlist.ui.nav.Routes
 import com.xaxka.openlist.ui.theme.Dimens
-import com.xaxka.openlist.video.SafHelper
+import com.xaxka.openlist.system.SafHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -74,16 +73,11 @@ internal const val TEXT_NOTIFICATION_DESC = "用于前台服务保活"
 internal const val TEXT_CANCEL = "取消"
 internal const val TEXT_CONFIRM = "确认"
 
-internal const val TEXT_NO_DIRS = "未设置监听目录"
-internal const val TEXT_RUNNING = "运行中"
-internal const val TEXT_IDLE = "空闲"
-internal const val DEFAULT_SUFFIX = "HashMod"
-
 internal const val SNACK_DURATION_LONG = 3000L
 
 /**
  * 设置页（源 settings.dart）：权限组（动态显隐）→ 通用 → 扩展功能入口 → 界面。
- * 视频洗码与内网映射（EasyTier）拆为子页面（见 VideoHashSettingsScreen / EasyTierSettingsScreen）。
+ * 内网映射（EasyTier）拆为子页面（见 EasyTierSettingsScreen）。
  * 无 AppBar，Scaffold 背景与底部导航由主框架提供。
  */
 @Composable
@@ -246,15 +240,6 @@ fun SettingsScreen(
 
             // ---------- 扩展功能（子页面入口） ----------
             SettingsDividerPreference(TEXT_FEATURES)
-            SettingsBasicPreference(
-                title = "视频洗码",
-                subtitle = state.videoHashStatus.ifEmpty {
-                    if (state.videoHashRunning) TEXT_RUNNING else TEXT_IDLE
-                },
-                leading = { SettingsPreferenceIcon(Icons.Outlined.Movie) },
-                trailing = { SettingsChevron() },
-                onTap = { navController?.navigate(Routes.SETTINGS_VIDEOHASH) }
-            )
             SettingsBasicPreference(
                 title = "内网映射（EasyTier）",
                 subtitle = state.easytierStatus,

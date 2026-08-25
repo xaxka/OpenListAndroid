@@ -53,8 +53,6 @@ object Dimens {
     val IconButtonSize = 44.dp
     val IconDefault = 24.dp
     val ChevronIconSize = 24.dp
-    val ProgressCircularSize = 24.dp
-    val ProgressCircularStrokeWidth = 2.dp
 
     /** 线性进度条高度：4dp 圆角轨道（§3.8） */
     val ProgressLinearHeight = 4.dp

@@ -21,7 +21,3 @@
 # OkHttp（coil-network-okhttp 间接依赖）：可选加密 provider 缺失告警
 -dontwarn okhttp3.**
 -dontwarn okio.**
-
-# WorkManager 反射
--keep class * extends androidx.work.CoroutineWorker { *; }
--keep class * extends androidx.work.ListenableWorker { *; }

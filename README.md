@@ -7,7 +7,6 @@
 - **一键启停服务器**：前台服务常驻（specialUse，规避 Android 15+ 前台服务时长限制），通知栏 / 快速设置磁贴 / 桌面快捷方式均可控制
 - **内置网页**：底部导航 WebView 直开 OpenList Web 管理页，服务启动后可自动跳转
 - **内网映射（EasyTier）**：no-tun 模式、不申请 VPN，组网设备经虚拟 IP 直达本机任意端口（如 5244），无需端口转发规则；支持对等节点、网络密钥、QUIC 代理；内置后台冻结/清理自愈
-- **视频洗码**：指定目录批量扫描/还原，WorkManager 后台执行
 - **其他**：开机自启、保持唤醒、深色模式/动态配色、数据目录自定义
 
 ## 下载
@@ -36,8 +35,7 @@
 app/                 应用主体（Compose UI / 前台服务）
 ├─ easytier/         EasyTier 实例管理、状态解析与自愈
 ├─ service/          OpenList 前台服务与状态机
-├─ ui/               主页 / 设置 / 导航
-└─ video/            视频洗码
+└─ ui/               主页 / 设置 / 导航
 alist-lib/           Go 内核绑定层（gomobile 脚本 + alistlib 桥接代码）
 .github/workflows/   CI：EasyTier JNI（Rust）+ Go AAR 内容寻址缓存 + 签名分包发布
 ```

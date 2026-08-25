@@ -1,4 +1,4 @@
-package com.xaxka.openlist.video
+package com.xaxka.openlist.system
 
 import android.content.Context
 import android.content.Intent

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -172,18 +171,6 @@ internal fun SettingsSwitchPreference(
             )
         },
         onTap = { onCheckedChange(!value) }
-    )
-}
-
-/** 处理状态条目运行中的 24×24 转圈（strokeWidth 2、无轨道） */
-@Composable
-internal fun SettingsProgressSpinner() {
-    CircularProgressIndicator(
-        modifier = Modifier
-            .width(Dimens.ProgressCircularSize)
-            .height(Dimens.ProgressCircularSize),
-        strokeWidth = Dimens.ProgressCircularStrokeWidth,
-        trackColor = Color.Transparent
     )
 }
 

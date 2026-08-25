@@ -1,28 +1,18 @@
 package com.xaxka.openlist
 
 import android.app.Application
-import androidx.hilt.work.HiltWorkerFactory
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import androidx.work.Configuration
 import com.xaxka.openlist.service.ServerManager
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
 @HiltAndroidApp
-class OpenListApp : Application(), Configuration.Provider, DefaultLifecycleObserver {
-
-    @Inject
-    lateinit var workerFactory: HiltWorkerFactory
+class OpenListApp : Application(), DefaultLifecycleObserver {
 
     @Inject
     lateinit var serverManager: ServerManager
-
-    override val workManagerConfiguration: Configuration
-        get() = Configuration.Builder()
-            .setWorkerFactory(workerFactory)
-            .build()
 
     override fun onCreate() {
         // 显式指明 Application：DefaultLifecycleObserver 也有 onCreate，二者并存时 super 有歧义

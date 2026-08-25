@@ -12,7 +12,6 @@ import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
 import com.xaxka.openlist.service.ServerManager
 import com.xaxka.openlist.service.ServerState
-import com.xaxka.openlist.video.VideoHashWorker
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -25,14 +24,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import androidx.work.WorkManager
 import javax.inject.Inject
 
 /**
  * 设置页 ViewModel：逐组复刻源 _SettingsController。
  *
- * 偏好经 [AppPrefsRepository] Flow 直读（源为 onInit/onResume 拉取）；
- * 洗码运行/状态由 Worker 写入偏好后经 Flow 自动回流（等价源 2s×150 次轮询，时延更优）。
+ * 偏好经 [AppPrefsRepository] Flow 直读（源为 onInit/onResume 拉取）。
  */
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -60,11 +57,6 @@ class SettingsViewModel @Inject constructor(
         val autoOpenWeb: Boolean = false,
         val dataDir: String = "",
         val noMemoryCache: Boolean = true,
-        // 视频洗码
-        val videoHashDirs: List<String> = emptyList(),
-        val videoHashSuffix: String = "",
-        val videoHashRunning: Boolean = false,
-        val videoHashStatus: String = "",
         // 界面
         val darkMode: Boolean = false,
         val dynamicColor: Boolean = false,
@@ -100,10 +92,6 @@ class SettingsViewModel @Inject constructor(
         prefs.autoOpenWeb,
         prefs.dataDir,
         prefs.noMemoryCache,
-        prefs.videoHashDirs,
-        prefs.videoHashSuffix,
-        prefs.videoHashRunning,
-        prefs.videoHashStatus,
         prefs.darkMode,
         prefs.dynamicColor,
         prefs.silentJumpApp,
@@ -123,46 +111,22 @@ class SettingsViewModel @Inject constructor(
             autoOpenWeb = values[3] as Boolean,
             dataDir = values[4] as String,
             noMemoryCache = values[5] as Boolean,
-            videoHashDirs = values[6] as List<String>,
-            videoHashSuffix = values[7] as String,
-            videoHashRunning = values[8] as Boolean,
-            videoHashStatus = values[9] as String,
-            darkMode = values[10] as Boolean,
-            dynamicColor = values[11] as Boolean,
-            silentJumpApp = values[12] as Boolean,
-            easytierEnabled = values[13] as Boolean,
-            easytierNetwork = values[14] as String,
-            easytierNetworkSecret = values[15] as String,
-            easytierPeerUri = values[16] as String,
-            easytierQuicProxy = values[17] as Boolean,
-            easytierSecureMode = values[18] as Boolean,
-            easytierStatus = (values[19] as EasyTierManager.Status).summary,
-            easytierDetail = values[19] as EasyTierManager.Status
+            darkMode = values[6] as Boolean,
+            dynamicColor = values[7] as Boolean,
+            silentJumpApp = values[8] as Boolean,
+            easytierEnabled = values[9] as Boolean,
+            easytierNetwork = values[10] as String,
+            easytierNetworkSecret = values[11] as String,
+            easytierPeerUri = values[12] as String,
+            easytierQuicProxy = values[13] as Boolean,
+            easytierSecureMode = values[14] as Boolean,
+            easytierStatus = (values[15] as EasyTierManager.Status).summary,
+            easytierDetail = values[15] as EasyTierManager.Status
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
     init {
         refreshPermissions()
-        viewModelScope.launch(Dispatchers.IO) { repairRunningFlag() }
-    }
-
-    /**
-     * 进程被杀导致 Worker 未能复位时，videoHashRunning 会残留 true（设置页永远转圈）。
-     * 打开设置页时查询唯一任务实际状态：无在途（RUNNING/ENQUEUED）任务则复位；
-     * 查询失败保守不复位。
-     */
-    private suspend fun repairRunningFlag() {
-        if (!prefs.videoHashRunning.first()) return
-        val hasActiveWork = runCatching {
-            WorkManager.getInstance(appContext)
-                .getWorkInfosForUniqueWork(VideoHashWorker.WORK_NAME_ONETIME)
-                .get()
-                .any { !it.state.isFinished }
-        }.getOrDefault(true)
-        if (!hasActiveWork) {
-            prefs.setVideoHashRunning(false)
-            prefs.setVideoHashStatus("上次任务未正常结束，已重置")
-        }
     }
 
     /** 权限授权状态刷新（照源 updateData 的 SDK 分支判定；从系统设置返回后由 ON_RESUME 触发） */
@@ -287,53 +251,6 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             setter(value)
             snack("${label}已保存，重开内网映射开关或重启服务后生效")
-        }
-    }
-
-    // ---------- 视频洗码 ----------
-
-    /** 仅支持单监听目录：新选目录替换旧目录（照源） */
-    fun setVideoHashDirs(dirs: List<String>) {
-        viewModelScope.launch { prefs.setVideoHashDirs(dirs) }
-    }
-
-    fun setVideoHashSuffix(suffix: String) {
-        viewModelScope.launch { prefs.setVideoHashSuffix(suffix) }
-    }
-
-    /** 手动触发洗码（照源 startScan：目录/文字前置校验 + Snackbar + 置运行中） */
-    fun startScan() {
-        val state = uiState.value
-        if (state.videoHashDirs.isEmpty()) {
-            snack("未设置监听目录")
-            return
-        }
-        if (state.videoHashSuffix.isBlank()) {
-            snack("请输入追加文字")
-            return
-        }
-        viewModelScope.launch {
-            prefs.setVideoHashRunning(true)
-            VideoHashWorker.enqueue(appContext, VideoHashWorker.MODE_SCAN, state.videoHashDirs, state.videoHashSuffix)
-            snack("已开始洗码处理")
-        }
-    }
-
-    /** 手动触发还原（照源 startRestore） */
-    fun startRestore() {
-        val state = uiState.value
-        if (state.videoHashDirs.isEmpty()) {
-            snack("未设置监听目录")
-            return
-        }
-        if (state.videoHashSuffix.isBlank()) {
-            snack("请输入追加文字")
-            return
-        }
-        viewModelScope.launch {
-            prefs.setVideoHashRunning(true)
-            VideoHashWorker.enqueue(appContext, VideoHashWorker.MODE_RESTORE, state.videoHashDirs, state.videoHashSuffix)
-            snack("已开始还原处理")
         }
     }
 

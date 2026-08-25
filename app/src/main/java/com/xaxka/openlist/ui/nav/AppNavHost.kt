@@ -36,7 +36,6 @@ import com.xaxka.openlist.ui.main.HomeViewModel
 import com.xaxka.openlist.ui.settings.EasyTierSettingsScreen
 import com.xaxka.openlist.ui.settings.EasyTierStatusDetailScreen
 import com.xaxka.openlist.ui.settings.SettingsScreen
-import com.xaxka.openlist.ui.settings.VideoHashSettingsScreen
 import com.xaxka.openlist.ui.theme.AnimPageFade
 import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.ui.web.WebScreen
@@ -50,7 +49,6 @@ object Routes {
     const val SETTINGS = "settings"
 
     /** 设置子页面（设置页内入口进入，返回回到设置页） */
-    const val SETTINGS_VIDEOHASH = "settings/videohash"
     const val SETTINGS_EASYTIER = "settings/easytier"
 
     /** 内网映射「映射状态」详情页：本节点（点「映射状态」进入，返回回到内网映射页） */
@@ -158,7 +156,6 @@ fun AppNavHost(
             composable(Routes.HOME) { HomeScreen(viewModel = homeViewModel) }
             composable(Routes.WEB) { WebScreen(viewModel = webViewModel, stateHolder = webStateHolder) }
             composable(Routes.SETTINGS) { SettingsScreen(navController = navController) }
-            composable(Routes.SETTINGS_VIDEOHASH) { VideoHashSettingsScreen(navController = navController) }
             composable(Routes.SETTINGS_EASYTIER) { EasyTierSettingsScreen(navController = navController) }
             composable(Routes.SETTINGS_EASYTIER_STATUS) { EasyTierStatusDetailScreen(navController = navController) }
         }
