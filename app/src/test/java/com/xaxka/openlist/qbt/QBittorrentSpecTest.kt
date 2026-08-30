@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * QBittorrentSpec 单测：配置种子与偏好 JSON 的生成契约。
+ * QBittorrentSpec 单测：配置种子与启动偏好 JSON 的生成契约。
  * 对照 qbittorrent-enhanced-nox 5.2.3.10 实测（profile/qBittorrent/config/qBittorrent.conf）：
  * - [Preferences] WebUI\Address/Port/LocalHostAuth/Username/Password_PBKDF2
  * - [BitTorrent] Session\DefaultSavePath
@@ -29,7 +29,7 @@ class QBittorrentSpecTest {
 
     @Test
     fun `种子配置包含回环绑定与免认证与保存路径`() {
-        val conf = QBittorrentSpec.buildSeedConfig(18085, "/data/user/0/app/files/dl")
+        val conf = QBittorrentSpec.buildSeedConfig(18085, "/storage/emulated/0/Download/qbittorrent")
         // WebUI 仅绑定回环 + 本机免认证（安全默认：局域网不可访问）
         assertTrue(conf.contains("WebUI\\Address=127.0.0.1"))
         assertTrue(conf.contains("WebUI\\Port=18085"))
@@ -37,21 +37,28 @@ class QBittorrentSpecTest {
         // 固定凭据：admin/adminadmin（qb 5.2 凭据为空时 WebUI 报错，必须随种子写入）
         assertTrue(conf.contains("WebUI\\Username=admin"))
         assertTrue(conf.contains("WebUI\\Password_PBKDF2=\"@ByteArray("))
-        // 默认保存路径写入 Session\DefaultSavePath
-        assertTrue(conf.contains("Session\\DefaultSavePath=/data/user/0/app/files/dl"))
+        // 默认保存路径写入 Session\DefaultSavePath（公共下载目录）
+        assertTrue(conf.contains("Session\\DefaultSavePath=/storage/emulated/0/Download/qbittorrent"))
     }
 
     @Test
-    fun `偏好JSON仅含保存路径不携带代理字段`() {
-        val json = QBittorrentSpec.buildSavePathPreferencesJson("/sdcard0/dl")
-        // bionic 版 DNS 走系统原生，App 管理策略为无代理：不再下发任何代理字段
-        assertTrue(json.contains("\"save_path\":\"/sdcard0/dl\""))
+    fun `启动偏好JSON含固定凭据与保存路径不携带代理字段`() {
+        val json = QBittorrentSpec.buildStartupPreferencesJson("/storage/emulated/0/Download/qbittorrent")
+        // 固定凭据：WebUI 就绪后运行态自愈对齐（qb setPreferences 明文入参，
+        // qb 侧自行 PBKDF2 哈希落盘）
+        assertTrue(json.contains("\"web_ui_username\":\"admin\""))
+        assertTrue(json.contains("\"web_ui_password\":\"adminadmin\""))
+        // localhost 免认证（qb 侧参数为 bypass_local_auth，与种子 LocalHostAuth=false 互补）
+        assertTrue(json.contains("\"bypass_local_auth\":true"))
+        // 保存路径下发
+        assertTrue(json.contains("\"save_path\":\"/storage/emulated/0/Download/qbittorrent\""))
+        // bionic 版 DNS 走系统原生，App 管理策略为无代理：不下发任何代理字段
         assertFalse(json.contains("proxy"))
     }
 
     @Test
     fun `JSON转义处理反斜杠与引号`() {
-        val json = QBittorrentSpec.buildSavePathPreferencesJson("a\"b\\c")
+        val json = QBittorrentSpec.buildStartupPreferencesJson("a\"b\\c")
         assertTrue(json.contains("a\\\"b\\\\c"))
         assertFalse(json.contains("a\"b"))
     }

@@ -2,6 +2,7 @@ package com.xaxka.openlist.qbt
 
 import android.content.Context
 import android.os.Build
+import android.os.Environment
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.log.QBittorrentEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
@@ -35,11 +36,12 @@ import kotlinx.coroutines.withContext
  * 生命周期由 [com.xaxka.openlist.service.ServerManager] 驱动（RUNNING 时按偏好拉起，
  * 停止流程即回收），与 EasyTier 内网映射同一模式。
  *
- * 启动流程：配置准备（WebUI 仅回环 + 免认证 + 固定凭据 admin/adminadmin；顺带清理
+ * 启动流程：配置准备（删除崩溃残留的 qBittorrent_new.conf（否则其读取优先级高于
+ * 正式配置，凭据会被旧状态劫持）；写入/对齐固定凭据 admin/adminadmin；顺带清理
  * 旧版残留代理键）→ 拉起子进程（--profile 独立目录，TMPDIR/HOME/TZ 指向应用
- * 目录/UTC）→ 轮询 WebUI 就绪 → setPreferences 下发保存路径（域名解析由 bionic
- * getaddrinfo→netd 原生完成，DHT(UDP)/peer/tracker 全部直连，无需代理组件）→
- * 进入运行态周期巡检（进程存活 + WebUI 版本）。
+ * 目录/UTC）→ 轮询 WebUI 就绪 → setPreferences 强制对齐固定凭据与保存路径
+ * （域名解析由 bionic getaddrinfo→netd 原生完成，DHT(UDP)/peer/tracker 全部直连，
+ * 无需代理组件）→ 进入运行态周期巡检（进程存活 + WebUI 版本）。
  *
  * TZ=UTC：内置 Qt 的时区后端为 tzfile 版（读 TZ/POSIX 规则，Android 无
  * /etc/localtime），显式指定避免无效时区告警；WebUI 时间戳由浏览器端格式化
@@ -183,15 +185,11 @@ class QBittorrentManager @Inject constructor(
         val port = QBittorrentSpec.parsePort(prefs.qbtWebUiPort.first())
         val lanAccess = prefs.qbtLanAccess.first()
         val profileDir = File(appContext.filesDir, "qbt-profile")
-        val saveDir = File(
-            appContext.getExternalFilesDir(null) ?: appContext.filesDir,
-            "qBittorrent/Downloads",
-        )
-        runCatching { saveDir.mkdirs() }
+        val saveDir = resolveSaveDir()
 
-        // 配置：首次写种子；已存在则对齐 WebUI 绑定/端口与固定凭据（保留 nox
-        // 持久化的其他键）
-        runCatching { ensureConfig(profileDir, port, lanAccess) }
+        // 配置：先清崩溃残留（否则劫持种子/更新），首次写种子；已存在则对齐 WebUI
+        // 绑定/端口与固定凭据（保留 nox 持久化的其他键）
+        runCatching { ensureConfig(profileDir, port, lanAccess, saveDir.absolutePath) }
             .onFailure { log(LoggableLevel.WARN, "写入/更新配置失败：${it.message}") }
 
         transition(
@@ -200,7 +198,8 @@ class QBittorrentManager @Inject constructor(
         log(
             LoggableLevel.INFO,
             "启动 qbittorrent-enhanced-nox v${QBittorrentSpec.EMBEDDED_VERSION}（WebUI 端口 $port，" +
-                "监听 ${if (lanAccess) "0.0.0.0（局域网需登录）" else "127.0.0.1（仅本机）"}，DNS 走系统原生）",
+                "监听 ${if (lanAccess) "0.0.0.0（局域网需登录）" else "127.0.0.1（仅本机）"}，" +
+                "保存路径 ${saveDir.absolutePath}）",
         )
 
         val proc = try {
@@ -267,8 +266,8 @@ class QBittorrentManager @Inject constructor(
                     savePath = saveDir.absolutePath, lanAccess = lanAccess)
             )
             log(LoggableLevel.INFO, "WebUI 已就绪（$ready）")
-            // 生效保存路径（每轮启动都下发，与旧行为一致）
-            applySavePathPreferences(port, saveDir.absolutePath)
+            // 强制对齐固定凭据与保存路径（每轮启动都下发：自愈历史遗留的任意配置状态）
+            applyStartupPreferences(port, saveDir.absolutePath)
         }
         fastFailCount = 0
         startMonitor()
@@ -360,9 +359,41 @@ class QBittorrentManager @Inject constructor(
         return null
     }
 
-    /** 保存路径经 WebUI API 下发（localhost 免认证；失败不影响运行态）。 */
-    private suspend fun applySavePathPreferences(port: Int, savePath: String) {
-        val json = QBittorrentSpec.buildSavePathPreferencesJson(savePath)
+    /**
+     * 保存路径解析：公共下载目录 /storage/emulated/0/Download/qbittorrent。
+     *
+     * App 已声明 MANAGE_EXTERNAL_STORAGE（OpenList 本地存储功能同源），nox 与 App 同
+     * UID 继承该授权；未授权（或目录不可写，如无所有文件权限的低版本设备）时回退
+     * 应用专属外部目录并告警，避免下载全部失败。
+     */
+    @Suppress("DEPRECATION")
+    private fun resolveSaveDir(): File {
+        val publicDir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "qbittorrent",
+        )
+        if (publicDir.isDirectory || publicDir.mkdirs()) return publicDir
+        val fallback = File(
+            appContext.getExternalFilesDir(null) ?: appContext.filesDir,
+            "qBittorrent/Downloads",
+        )
+        runCatching { fallback.mkdirs() }
+        log(
+            LoggableLevel.WARN,
+            "公共下载目录不可写（未授予所有文件权限？），保存路径回退：${fallback.absolutePath}",
+        )
+        return fallback
+    }
+
+    /**
+     * 固定凭据与保存路径经 WebUI API 下发（localhost 免认证；失败不影响运行态）。
+     *
+     * 与配置文件层互补的运行态自愈：无论历史配置处于何种状态（如旧版本残留），
+     * WebUI 就绪后都强制对齐 admin/adminadmin 与 localhost 免认证；qb 会把结果
+     * 持久化回配置文件。
+     */
+    private suspend fun applyStartupPreferences(port: Int, savePath: String) {
+        val json = QBittorrentSpec.buildStartupPreferencesJson(savePath)
         val ok = withContext(Dispatchers.IO) {
             httpPostForm(
                 "http://127.0.0.1:$port/api/v2/app/setPreferences",
@@ -370,26 +401,31 @@ class QBittorrentManager @Inject constructor(
             )
         }
         if (!ok) {
-            log(LoggableLevel.WARN, "下发保存路径偏好失败（nox 将沿用配置文件内的路径）")
+            log(LoggableLevel.WARN, "下发固定凭据/保存路径失败（将沿用配置文件内的设置）")
         } else {
-            log(LoggableLevel.INFO, "保存路径已生效")
+            log(LoggableLevel.INFO, "固定凭据与保存路径已生效（admin/adminadmin）")
         }
     }
 
     /**
      * 配置文件准备（进程启动前调用，无并发问题）：
-     * - 不存在：写种子（含 WebUI 绑定，按 lanAccess 取 0.0.0.0/127.0.0.1，及固定
-     *   凭据 admin/adminadmin 的 PBKDF2 哈希）；
+     * - 先删 qBittorrent_new.conf：qb 原子保存的回退文件，正常退出时已被重命名
+     *   消失；残留即崩溃/被杀现场（旧状态），且其**启动读取优先级高于正式配置**
+     *   ——不清会把种子/对齐的固定凭据劫持掉（凭据丢失 → nox 每次会话生成随机
+     *   临时密码 → admin/adminadmin 登录 401）；
+     * - 不存在正式配置：写种子（含 WebUI 绑定，按 lanAccess 取 0.0.0.0/127.0.0.1，
+     *   及固定凭据 admin/adminadmin 的 PBKDF2 哈希，保存路径为公共下载目录）；
      * - 已存在：只对齐 Address/Port/LocalHostAuth/Username/Password_PBKDF2 五个键
      *   （QSettings 语义，键序无关），保留 nox 自行持久化的其他键——用户在 WebUI
      *   改的设置不丢（凭据除外：固定默认值，每次启动重置）。
      */
-    private fun ensureConfig(profileDir: File, port: Int, lanAccess: Boolean) {
-        val confFile = File(profileDir, "qBittorrent/config/qBittorrent.conf")
-        val savePath = File(
-            appContext.getExternalFilesDir(null) ?: appContext.filesDir,
-            "qBittorrent/Downloads",
-        ).absolutePath
+    private fun ensureConfig(profileDir: File, port: Int, lanAccess: Boolean, savePath: String) {
+        val configDir = File(profileDir, "qBittorrent/config")
+        val fallbackNew = File(configDir, "qBittorrent_new.conf")
+        if (fallbackNew.isFile && runCatching { fallbackNew.delete() }.getOrDefault(false)) {
+            log(LoggableLevel.INFO, "已清理崩溃残留的配置回退文件（qBittorrent_new.conf）")
+        }
+        val confFile = File(configDir, "qBittorrent.conf")
         if (!confFile.isFile) {
             confFile.parentFile?.mkdirs()
             confFile.writeText(QBittorrentSpec.buildSeedConfig(port, savePath, lanAccess))

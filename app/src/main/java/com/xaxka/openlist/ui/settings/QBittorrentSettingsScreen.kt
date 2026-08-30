@@ -228,7 +228,6 @@ private fun QbtStatusSection(
                 "监听",
                 if (detail.lanAccess) "0.0.0.0（局域网需登录 admin/adminadmin，本机 localhost 免登录）" else "仅本机（localhost 免鉴权）",
             )
-            QbtStatusKV("域名解析", "系统原生（bionic netd，兼容 Private DNS / DNS64）")
         }
         if (detail.savePath.isNotBlank()) QbtStatusKV("保存路径", detail.savePath)
         if (detail.detail.isNotBlank()) QbtStatusKV("说明", detail.detail)

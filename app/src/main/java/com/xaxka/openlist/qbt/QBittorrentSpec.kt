@@ -34,6 +34,9 @@ object QBittorrentSpec {
     /** WebUI 登录用户名（qb 默认，固定不可改）。 */
     const val WEBUI_USERNAME = "admin"
 
+    /** WebUI 登录密码明文（qb 默认 adminadmin，固定不可改；仅用于启动后 API 对齐重置）。 */
+    internal const val WEBUI_PASSWORD_PLAIN = "adminadmin"
+
     /**
      * WebUI 登录密码的 PBKDF2 哈希（qb 兼容格式 `salt:hash`，PBKDF2-HMAC-SHA512、
      * 100000 迭代、64 字节输出，见 qbt Utils::Password::PBKDF2::generate）。
@@ -71,7 +74,12 @@ object QBittorrentSpec {
      * - [Preferences] WebUI\Password_PBKDF2：qb 5.2 凭据为空时 WebUI 直接报错
      *   （"Credentials are not set"，不再回退默认密码），必须随种子写入
      *   admin/adminadmin 的哈希；
-     * - [BitTorrent] Session\DefaultSavePath：默认保存路径（应用专属外部目录）。
+     * - [BitTorrent] Session\DefaultSavePath：默认保存路径（公共 Download/qbittorrent）。
+     *
+     * ⚠️ qb 的原子保存回退文件 qBittorrent_new.conf 在启动读取时**无条件优先**于
+     * 本文件（视为异常退出恢复）；崩溃/被杀残留的 _new 会劫持本种子（凭据丢失
+     * → nox 生成一次性随机临时密码 → 登录 401）。由 Manager 在每次启动前删除
+     * 残留 _new（见 [com.xaxka.openlist.qbt.QBittorrentManager.ensureConfig]）。
      *
      * 代理不写入：bionic 版 DNS 走系统原生，App 管理策略为无代理；旧版本残留的
      * 代理键由 [updateWebUiConfig] 在每次启动前清理。
@@ -154,13 +162,21 @@ object QBittorrentSpec {
     }
 
     /**
-     * 保存路径偏好 JSON（setPreferences POST；每轮启动下发，与旧行为一致）。
+     * 启动偏好 JSON（setPreferences POST；每轮启动 WebUI 就绪后下发）。
+     *
+     * 固定凭据策略的运行态自愈层：本机回环免认证（LocalHostAuth=false）下调用，
+     * 无论配置文件处于何种历史状态，都把账号密码强制对齐 admin/adminadmin
+     * （WebUI 内的改动被重置），并同步 localhost 免认证与保存路径。
      *
      * 不再携带代理字段：bionic 版 DNS 走系统原生，代理相关的历史残留统一由
      * [updateWebUiConfig] 在启动前清理（App 管理策略为无代理）。
      */
-    fun buildSavePathPreferencesJson(savePath: String): String =
-        "{\"save_path\":\"${escapeJson(savePath)}\"}"
+    fun buildStartupPreferencesJson(savePath: String): String = buildString {
+        append("{\"web_ui_username\":\"").append(escapeJson(WEBUI_USERNAME))
+        append("\",\"web_ui_password\":\"").append(escapeJson(WEBUI_PASSWORD_PLAIN))
+        append("\",\"bypass_local_auth\":true")
+        append(",\"save_path\":\"").append(escapeJson(savePath)).append("\"}")
+    }
 
     /** INI 路径值转义：反斜杠不转（Linux 风格路径），仅去换行保证单行。 */
     internal fun escapePath(value: String): String =
