@@ -229,6 +229,51 @@ jobs:
               || { echo "ERROR: missing libeasytier_android_jni.so for $abi"; exit 1; }
           done
 
+      # qBittorrent Enhanced nox（musl 静态二进制，BT 下载扩展功能）：
+      # 上游 release 的 zip 解压出 qbittorrent-nox，改名 libqbittorrent-nox.so 注入
+      # jniLibs（AGP 仅打包 lib 前缀；useLegacyPackaging 解压到 nativeLibraryDir 后可 exec）。
+      # 版本须与 app QBittorrentSpec.EMBEDDED_VERSION 一致（当前 5.2.3.10）。
+      - name: qBittorrent nox cache
+        id: qbt-cache
+        uses: actions/cache@v4
+        with:
+          path: qbt-nox-libs
+          key: qbt-nox-v5.2.3.10-all-abi
+
+      - name: Download qBittorrent Enhanced nox
+        if: steps.qbt-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          BASE="https://github.com/c0re100/qBittorrent-Enhanced-Edition/releases/download/release-5.2.3.10"
+          declare -A MAP=(
+            [arm64-v8a]=qbittorrent-enhanced-nox_aarch64-linux-musl_static
+            [armeabi-v7a]=qbittorrent-enhanced-nox_armv7-linux-musleabihf_static
+            [x86_64]=qbittorrent-enhanced-nox_x86_64-linux-musl_static
+          )
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            name="${MAP[$abi]}"
+            echo "== $name -> $abi"
+            curl -fSL --retry 5 --retry-delay 3 -o /tmp/qbt.zip "$BASE/$name.zip"
+            rm -rf /tmp/qbt-out && mkdir -p /tmp/qbt-out
+            unzip -o -q /tmp/qbt.zip -d /tmp/qbt-out
+            bin=$(find /tmp/qbt-out -type f -name 'qbittorrent*' | head -1)
+            test -n "$bin" || { echo "ERROR: no binary in $name.zip"; exit 1; }
+            file "$bin"
+            mkdir -p "qbt-nox-libs/$abi"
+            install -m 755 "$bin" "qbt-nox-libs/$abi/libqbittorrent-nox.so"
+          done
+
+      - name: Inject qBittorrent nox into jniLibs
+        run: |
+          set -eu
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            mkdir -p "app/src/main/jniLibs/$abi"
+            install -m 755 "qbt-nox-libs/$abi/libqbittorrent-nox.so" "app/src/main/jniLibs/$abi/libqbittorrent-nox.so"
+            test -s "app/src/main/jniLibs/$abi/libqbittorrent-nox.so" \
+              || { echo "ERROR: missing libqbittorrent-nox.so for $abi"; exit 1; }
+            ls -la "app/src/main/jniLibs/$abi/libqbittorrent-nox.so"
+          done
+
       # 与源项目同名 Secrets 键；gradle 侧由 app/build.gradle.kts 读取 local.properties
       - name: Init Signature
         run: |

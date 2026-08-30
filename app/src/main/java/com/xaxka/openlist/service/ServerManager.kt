@@ -18,6 +18,7 @@ import com.xaxka.openlist.data.log.LogBuffer
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
+import com.xaxka.openlist.qbt.QBittorrentManager
 import com.xaxka.openlist.system.ShortCuts
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -60,6 +61,7 @@ class ServerManager @Inject constructor(
     private val logBuffer: LogBuffer,
     private val prefs: AppPrefsRepository,
     private val easyTier: EasyTierManager,
+    private val qBittorrent: QBittorrentManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val core = ServerCore(engine, scope)
@@ -123,13 +125,19 @@ class ServerManager @Inject constructor(
                 if (st == ServerState.STOPPED) _serverUrl.value = null
             }
         }
-        // EasyTier 内网映射随服务启停：RUNNING 时按偏好拉起，进入停止流程即回收。
-        // 偏好开关由 EasyTierManager 自行读取，这里只转发服务状态。
+        // EasyTier 内网映射 / qBittorrent（BT 下载）随服务启停：RUNNING 时按偏好拉起，
+        // 进入停止流程即回收。偏好开关由各 Manager 自行读取，这里只转发服务状态。
         scope.launch {
             core.state.collect { st ->
                 when (st) {
-                    ServerState.RUNNING -> easyTier.startIfEnabled()
-                    ServerState.STOPPING, ServerState.STOPPED -> easyTier.stop()
+                    ServerState.RUNNING -> {
+                        easyTier.startIfEnabled()
+                        qBittorrent.startIfEnabled()
+                    }
+                    ServerState.STOPPING, ServerState.STOPPED -> {
+                        easyTier.stop()
+                        qBittorrent.stop()
+                    }
                     else -> Unit
                 }
             }
@@ -220,6 +228,7 @@ class ServerManager @Inject constructor(
     fun onAppForegrounded() {
         if (state.value == ServerState.RUNNING) {
             easyTier.ensureRecovered()
+            qBittorrent.ensureRecovered()
         }
     }
 

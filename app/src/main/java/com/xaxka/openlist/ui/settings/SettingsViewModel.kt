@@ -8,8 +8,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xaxka.openlist.data.log.EasyTierEventLog
+import com.xaxka.openlist.data.log.QBittorrentEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
+import com.xaxka.openlist.qbt.QBittorrentManager
 import com.xaxka.openlist.service.ServerManager
 import com.xaxka.openlist.service.ServerState
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,6 +39,8 @@ class SettingsViewModel @Inject constructor(
     private val easyTier: EasyTierManager,
     private val serverManager: ServerManager,
     private val eventLog: EasyTierEventLog,
+    private val qBittorrent: QBittorrentManager,
+    private val qbtEventLog: QBittorrentEventLog,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -69,7 +73,15 @@ class SettingsViewModel @Inject constructor(
         val easytierQuicProxy: Boolean = true,
         val easytierSecureMode: Boolean = false,
         val easytierStatus: String = "",
-        val easytierDetail: EasyTierManager.Status = EasyTierManager.Status()
+        val easytierDetail: EasyTierManager.Status = EasyTierManager.Status(),
+        // BT 下载（qBittorrent）
+        val qbtEnabled: Boolean = false,
+        val qbtPort: String = "",
+        val qbtStatus: String = "",
+        val qbtDetail: QBittorrentManager.Status = QBittorrentManager.Status(),
+        val qbtLanAccess: Boolean = false,
+        val qbtUsername: String = "admin",
+        val qbtPassword: String = ""
     )
 
     /** 一次性 Snackbar 事件（文案/时长/动作照源 GetSnackBar 调用点） */
@@ -101,7 +113,13 @@ class SettingsViewModel @Inject constructor(
         prefs.easytierPeerUri,
         prefs.easytierQuicProxy,
         prefs.easytierSecureMode,
-        easyTier.state
+        easyTier.state,
+        prefs.qbtEnabled,
+        prefs.qbtWebUiPort,
+        qBittorrent.state,
+        prefs.qbtLanAccess,
+        prefs.qbtUsername,
+        prefs.qbtPassword
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         UiState(
@@ -121,7 +139,14 @@ class SettingsViewModel @Inject constructor(
             easytierQuicProxy = values[13] as Boolean,
             easytierSecureMode = values[14] as Boolean,
             easytierStatus = (values[15] as EasyTierManager.Status).summary,
-            easytierDetail = values[15] as EasyTierManager.Status
+            easytierDetail = values[15] as EasyTierManager.Status,
+            qbtEnabled = values[16] as Boolean,
+            qbtPort = values[17] as String,
+            qbtStatus = (values[18] as QBittorrentManager.Status).summary,
+            qbtDetail = values[18] as QBittorrentManager.Status,
+            qbtLanAccess = values[19] as Boolean,
+            qbtUsername = values[20] as String,
+            qbtPassword = values[21] as String
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -253,6 +278,88 @@ class SettingsViewModel @Inject constructor(
             snack("${label}已保存，重开内网映射开关或重启服务后生效")
         }
     }
+
+    // ---------- BT 下载（qBittorrent） ----------
+
+    /** 总开关：立即启停（服务未运行时保存待服务启动生效） */
+    fun setQbtEnabled(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setQbtEnabled(value)
+            val running = serverManager.state.value == ServerState.RUNNING
+            when {
+                running && value -> {
+                    snack("正在启动 BT 下载…")
+                    qBittorrent.restart()
+                }
+                running && !value -> {
+                    snack("正在停止 BT 下载…")
+                    qBittorrent.stop()
+                }
+                else -> snack(if (value) "已启用，OpenList 服务启动后自动运行" else "已停用")
+            }
+        }
+    }
+
+    /** WebUI 端口：保存后运行中立即重启生效 */
+    fun setQbtPort(value: String) {
+        viewModelScope.launch {
+            prefs.setQbtWebUiPort(value)
+            if (serverManager.state.value == ServerState.RUNNING && qBittorrent.state.value.phase == QBittorrentManager.Phase.RUNNING) {
+                snack("端口已保存，正在重启 BT 下载…")
+                qBittorrent.restart()
+            } else {
+                snack("端口已保存，重开 BT 下载开关或重启服务后生效")
+            }
+        }
+    }
+
+    /** 手动重启（异常掉线自愈兜底）；开关已关或服务未启动时等价于按偏好尝试拉起 */
+    fun restartQbt() {
+        viewModelScope.launch {
+            qBittorrent.restart()
+            snack("正在重启 BT 下载…")
+        }
+    }
+
+    /**
+     * 局域网访问开关（绑定切换经重启 nox 生效）。
+     * 密码守卫在 UI 层完成：开启前若密码未设，先弹密码框再回调本方法。
+     */
+    fun setQbtLanAccess(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setQbtLanAccess(value)
+            if (serverManager.state.value == ServerState.RUNNING && qBittorrent.state.value.phase != QBittorrentManager.Phase.STOPPED) {
+                snack(if (value) "已开启局域网访问，正在重启 BT 下载…" else "已关闭局域网访问，正在重启 BT 下载…")
+                qBittorrent.restart()
+            } else {
+                snack(if (value) "已开启，重启 BT 下载后生效（其他设备需登录）" else "已关闭，重启 BT 下载后生效")
+            }
+        }
+    }
+
+    /** WebUI 登录用户名（仅局域网访问用到；运行中重启生效） */
+    fun setQbtUsername(value: String) {
+        viewModelScope.launch {
+            prefs.setQbtUsername(value)
+            snack("用户名已保存，重启 BT 下载后生效")
+        }
+    }
+
+    /** WebUI 登录密码：保存后运行中立即重启下发生效 */
+    fun setQbtPassword(value: String) {
+        viewModelScope.launch {
+            prefs.setQbtPassword(value)
+            if (serverManager.state.value == ServerState.RUNNING && qBittorrent.state.value.phase != QBittorrentManager.Phase.STOPPED) {
+                snack("密码已保存，正在重启 BT 下载生效…")
+                qBittorrent.restart()
+            } else {
+                snack("密码已保存，重启 BT 下载后生效")
+            }
+        }
+    }
+
+    /** 读取 qBittorrent 事件日记（最近 24h，旧→新原始文本），供「导出事件日记」写出。 */
+    fun qbtEventDiaryText(): String = qbtEventLog.readRecent()
 
     fun snack(
         message: String,

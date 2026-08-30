@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Lan
@@ -246,6 +247,13 @@ fun SettingsScreen(
                 leading = { SettingsPreferenceIcon(Icons.Outlined.Lan) },
                 trailing = { SettingsChevron() },
                 onTap = { navController?.navigate(Routes.SETTINGS_EASYTIER) }
+            )
+            SettingsBasicPreference(
+                title = "BT 下载（qBittorrent Enhanced）",
+                subtitle = state.qbtStatus,
+                leading = { SettingsPreferenceIcon(Icons.Outlined.CloudDownload) },
+                trailing = { SettingsChevron() },
+                onTap = { navController?.navigate(Routes.SETTINGS_QBT) }
             )
 
             // ---------- 界面 ----------
