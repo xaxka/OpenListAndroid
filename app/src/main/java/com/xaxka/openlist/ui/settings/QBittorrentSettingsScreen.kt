@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,13 +23,17 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,6 +45,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,10 +68,10 @@ import kotlinx.coroutines.withContext
  * 内置 bionic 动态链接二进制随 APK 打包（jniLibs 改名 libqbittorrent-nox.so），
  * 随 OpenList 服务启停；WebUI 默认仅监听 127.0.0.1 且 localhost 免鉴权，
  * 由「打开 WebUI」跳系统浏览器管理。可开启「局域网访问」：监听切 0.0.0.0，
- * 其他设备经 http://<本机IP>:<端口> 登录（admin/adminadmin，固定默认凭据；
- * 本机仍免登录）。
- * 域名解析走系统原生（bionic getaddrinfo→netd，兼容 Private DNS/DNS64）。
- * tracker/DHT/peer 全部直连，详见 QBittorrentManager。
+ * 其他设备经 http://<本机IP>:<端口> 登录（默认 admin/adminadmin，可在
+ * 「登录账号」中修改密码；本机仍免登录）。
+ * 内存：启动时下发手机场景调优（磁盘缓存上限 64MiB 等）；运行状态卡实时
+ * 展示 nox 进程常驻内存（VmRSS）。
  */
 @Composable
 fun QBittorrentSettingsScreen(
@@ -72,6 +81,7 @@ fun QBittorrentSettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showPortDialog by remember { mutableStateOf(false) }
+    var showPasswordDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -156,9 +166,13 @@ fun QBittorrentSettingsScreen(
                 )
                 SettingsBasicPreference(
                     title = "登录账号",
-                    subtitle = "admin / adminadmin（qb 默认，固定不可改；本机访问免登录）",
+                    subtitle = if (state.qbtPasswordCustom) {
+                        "admin / 已设自定义密码（点此修改）"
+                    } else {
+                        "admin / adminadmin（默认密码，点此修改）"
+                    },
                     leading = { SettingsPreferenceIcon(Icons.Outlined.Person) },
-                    onTap = {}
+                    onTap = { showPasswordDialog = true }
                 )
 
                 SettingsDividerPreference("运行状态")
@@ -209,9 +223,24 @@ fun QBittorrentSettingsScreen(
             }
         )
     }
+
+    if (showPasswordDialog) {
+        QbtPasswordDialog(
+            hasCustomPassword = state.qbtPasswordCustom,
+            onDismiss = { showPasswordDialog = false },
+            onConfirm = { password ->
+                showPasswordDialog = false
+                viewModel.setQbtWebUiPassword(password)
+            },
+            onResetDefault = {
+                showPasswordDialog = false
+                viewModel.resetQbtWebUiPassword()
+            }
+        )
+    }
 }
 
-/** 只读运行状态区：进程状态 / 版本 / WebUI / 保存路径。 */
+/** 只读运行状态区：进程状态 / 版本 / WebUI / 保存路径 / 内存占用。 */
 @Composable
 private fun QbtStatusSection(
     detail: QBittorrentManager.Status,
@@ -226,8 +255,10 @@ private fun QbtStatusSection(
         if (detail.phase == QBittorrentManager.Phase.RUNNING) {
             QbtStatusKV(
                 "监听",
-                if (detail.lanAccess) "0.0.0.0（局域网需登录 admin/adminadmin，本机 localhost 免登录）" else "仅本机（localhost 免鉴权）",
+                if (detail.lanAccess) "0.0.0.0（局域网需登录，本机 localhost 免登录）" else "仅本机（localhost 免鉴权）",
             )
+            // nox 进程常驻内存（VmRSS，5s 巡检采样；未采样到则不显示）
+            QbtStatusKV("内存占用", detail.memUsageText)
         }
         if (detail.savePath.isNotBlank()) QbtStatusKV("保存路径", detail.savePath)
         if (detail.detail.isNotBlank()) QbtStatusKV("说明", detail.detail)
@@ -298,5 +329,117 @@ private fun QbtTextDialog(
             SettingsDialogTextButton(text = "取消", onClick = onDismiss)
             SettingsDialogTextButton(text = "确定", onClick = { onConfirm(text) })
         }
+    )
+}
+
+/**
+ * 登录账号改密对话框：新密码 + 确认两栏（qb 要求 ≥6 字符）；已设自定义密码时
+ * 提供「恢复默认密码 adminadmin」入口。确认后运行中实例即时生效（qb 侧哈希
+ * 落盘），未运行时下次启动随配置写入。
+ */
+@Composable
+private fun QbtPasswordDialog(
+    hasCustomPassword: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+    onResetDefault: () -> Unit
+) {
+    var password by rememberSaveable { mutableStateOf("") }
+    var confirm by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf("") }
+
+    fun validate(): String {
+        if (password.length < QBittorrentSpec.WEBUI_PASSWORD_MIN_LENGTH)
+            return "密码至少 ${QBittorrentSpec.WEBUI_PASSWORD_MIN_LENGTH} 个字符"
+        if (password != password.trim()) return "密码不能以空格开头或结尾"
+        if (password != confirm) return "两次输入的密码不一致"
+        return ""
+    }
+
+    SettingsAlertDialog(
+        onDismissRequest = onDismiss,
+        title = "修改 WebUI 密码",
+        content = {
+            Column {
+                QbtPasswordField(
+                    label = "新密码（≥${QBittorrentSpec.WEBUI_PASSWORD_MIN_LENGTH} 位）",
+                    value = password,
+                    onValueChange = {
+                        password = it
+                        error = ""
+                    }
+                )
+                QbtPasswordField(
+                    label = "确认新密码",
+                    value = confirm,
+                    onValueChange = {
+                        confirm = it
+                        error = ""
+                    },
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+                if (error.isNotEmpty()) {
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+                Text(
+                    "用户名固定 admin；默认密码 adminadmin。运行中修改立即生效，本机访问（localhost）始终免登录。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+                if (hasCustomPassword) {
+                    TextButton(
+                        onClick = onResetDefault,
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) {
+                        Text("恢复默认密码 adminadmin")
+                    }
+                }
+            }
+        },
+        actions = {
+            SettingsDialogTextButton(text = "取消", onClick = onDismiss)
+            SettingsDialogTextButton(
+                text = "确定",
+                onClick = {
+                    val err = validate()
+                    if (err.isEmpty()) onConfirm(password) else error = err
+                }
+            )
+        }
+    )
+}
+
+/** 密码输入栏（带明文/密文切换）。 */
+@Composable
+private fun QbtPasswordField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var visible by rememberSaveable { mutableStateOf(false) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label, style = InputLabel) },
+        singleLine = true,
+        visualTransformation =
+            if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                Icon(
+                    if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                    contentDescription = if (visible) "隐藏密码" else "显示密码"
+                )
+            }
+        },
+        modifier = modifier.fillMaxWidth()
     )
 }

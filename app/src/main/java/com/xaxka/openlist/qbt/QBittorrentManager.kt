@@ -37,11 +37,16 @@ import kotlinx.coroutines.withContext
  * 停止流程即回收），与 EasyTier 内网映射同一模式。
  *
  * 启动流程：配置准备（删除崩溃残留的 qBittorrent_new.conf（否则其读取优先级高于
- * 正式配置，凭据会被旧状态劫持）；写入/对齐固定凭据 admin/adminadmin；顺带清理
- * 旧版残留代理键）→ 拉起子进程（--profile 独立目录，TMPDIR/HOME/TZ 指向应用
- * 目录/UTC）→ 轮询 WebUI 就绪 → setPreferences 强制对齐固定凭据与保存路径
+ * 正式配置，凭据会被旧状态劫持）；写入/对齐凭据 admin + 密码（默认 adminadmin，
+ * 可经「登录账号」菜单修改，存 DataStore）与内存调优/DHT 引导键；顺带清理旧版
+ * 残留代理键）→ 拉起子进程（--profile 独立目录，TMPDIR/HOME/TZ 指向应用
+ * 目录/UTC）→ 轮询 WebUI 就绪 → setPreferences 强制对齐凭据/保存路径/内存调优
  * （域名解析由 bionic getaddrinfo→netd 原生完成，DHT(UDP)/peer/tracker 全部直连，
- * 无需代理组件）→ 进入运行态周期巡检（进程存活 + WebUI 版本）。
+ * 无需代理组件）→ 进入运行态周期巡检（进程存活 + WebUI 版本 + 内存采样）。
+ *
+ * 内存占用：巡检周期读 /proc/<pid>/status 的 VmRSS（常驻内存）。PID 经
+ * /proc/<pid>/cmdline 扫描解析（Java Process 无公开 PID 接口，反射依赖内部
+ * 实现；/proc 同 UID 可读，cmdline 匹配二进制名，跨 Android 版本稳定）。
  *
  * TZ=UTC：内置 Qt 的时区后端为 tzfile 版（读 TZ/POSIX 规则，Android 无
  * /etc/localtime），显式指定避免无效时区告警；WebUI 时间戳由浏览器端格式化
@@ -66,6 +71,8 @@ class QBittorrentManager @Inject constructor(
         val savePath: String = "",
         /** 局域网访问（0.0.0.0 监听 + 登录；本机仍免认证）。 */
         val lanAccess: Boolean = false,
+        /** nox 进程常驻内存（VmRSS，KB；-1 = 未知/未采样）。 */
+        val memUsageKb: Long = -1L,
     ) {
         val summary: String
             get() = when (phase) {
@@ -76,12 +83,22 @@ class QBittorrentManager @Inject constructor(
                     if (version.isNotBlank()) append(" · v$version")
                     append(" · ")
                     append(if (lanAccess) "局域网:$webUiPort" else "127.0.0.1:$webUiPort")
+                    if (memUsageKb > 0) append(" · ").append(formatMemUsage(memUsageKb))
                 }.appendDetail(detail)
                 Phase.ERROR -> "错误".appendDetail(detail)
                 Phase.UNAVAILABLE -> "不可用".appendDetail(detail)
             }
 
         val webUiUrl: String get() = "http://127.0.0.1:$webUiPort"
+
+        /** 内存占用展示文案（MB，一位小数；<0.1MB 显示 0.1）。 */
+        val memUsageText: String
+            get() = if (memUsageKb > 0) formatMemUsage(memUsageKb) + "（常驻）" else ""
+
+        private fun formatMemUsage(kb: Long): String {
+            val mb = kb / 1024.0
+            return if (mb >= 100) "${(mb + 0.5).toLong()} MB" else "${"%.1f".format(mb)} MB"
+        }
 
         private fun String.appendDetail(d: String) = if (d.isEmpty()) this else "$this：$d"
     }
@@ -101,6 +118,10 @@ class QBittorrentManager @Inject constructor(
 
     @Volatile
     private var process: Process? = null
+
+    /** nox 子进程 PID（/proc 扫描解析；-1 = 未知；仅用于内存采样展示）。 */
+    @Volatile
+    private var noxPid: Int = -1
 
     @Volatile
     private var instanceStarted = false
@@ -184,12 +205,14 @@ class QBittorrentManager @Inject constructor(
 
         val port = QBittorrentSpec.parsePort(prefs.qbtWebUiPort.first())
         val lanAccess = prefs.qbtLanAccess.first()
+        val webUiPassword = prefs.qbtWebUiPassword.first().ifBlank { QBittorrentSpec.DEFAULT_WEBUI_PASSWORD }
         val profileDir = File(appContext.filesDir, "qbt-profile")
         val saveDir = resolveSaveDir()
 
         // 配置：先清崩溃残留（否则劫持种子/更新），首次写种子；已存在则对齐 WebUI
-        // 绑定/端口与固定凭据（保留 nox 持久化的其他键）
-        runCatching { ensureConfig(profileDir, port, lanAccess, saveDir.absolutePath) }
+        // 绑定/端口与凭据（密码取自定义或默认）及内存调优/DHT 引导键（保留 nox
+        // 持久化的其他键）
+        runCatching { ensureConfig(profileDir, port, lanAccess, saveDir.absolutePath, webUiPassword) }
             .onFailure { log(LoggableLevel.WARN, "写入/更新配置失败：${it.message}") }
 
         transition(
@@ -240,6 +263,7 @@ class QBittorrentManager @Inject constructor(
         process = proc
         instanceStarted = true
         startedAt = System.currentTimeMillis()
+        noxPid = -1
 
         // stdout 消费（防管道阻塞）→ 事件 Diary
         scope.launch(Dispatchers.IO) {
@@ -266,8 +290,9 @@ class QBittorrentManager @Inject constructor(
                     savePath = saveDir.absolutePath, lanAccess = lanAccess)
             )
             log(LoggableLevel.INFO, "WebUI 已就绪（$ready）")
-            // 强制对齐固定凭据与保存路径（每轮启动都下发：自愈历史遗留的任意配置状态）
-            applyStartupPreferences(port, saveDir.absolutePath)
+            // 强制对齐凭据/保存路径/内存调优（每轮启动都下发：自愈历史遗留的任意
+            // 配置状态；密码为自定义或默认 adminadmin）
+            applyStartupPreferences(port, saveDir.absolutePath, webUiPassword)
         }
         fastFailCount = 0
         startMonitor()
@@ -276,6 +301,7 @@ class QBittorrentManager @Inject constructor(
     private suspend fun stopLocked() {
         stopMonitor()
         instanceStarted = false
+        noxPid = -1
         process?.let { proc ->
             runCatching {
                 withContext(Dispatchers.IO) {
@@ -305,6 +331,7 @@ class QBittorrentManager @Inject constructor(
                         onProcessDied(proc)
                     } else if (_state.value.phase == Phase.RUNNING) {
                         refreshWebUiVersion(proc)
+                        refreshMemUsage()
                     }
                 }
             }
@@ -323,6 +350,7 @@ class QBittorrentManager @Inject constructor(
         log(LoggableLevel.WARN, "nox 进程意外退出（code=$code，存活 ${uptime / 1000}s）")
         instanceStarted = false
         process = null
+        noxPid = -1
         if (uptime < FAST_FAIL_MS) fastFailCount++ else fastFailCount = 0
         if (fastFailCount >= FAST_FAIL_LIMIT) {
             log(LoggableLevel.ERROR, "连续 $fastFailCount 次快速失败，停止自动重启（详见事件日记）")
@@ -342,6 +370,41 @@ class QBittorrentManager @Inject constructor(
         } else if (_state.value.detail.isEmpty()) {
             transition(_state.value.copy(detail = "WebUI 暂不可达"))
         }
+    }
+
+    /**
+     * 采样 nox 常驻内存（VmRSS）并写入状态（仅展示，不影响生命周期）。
+     *
+     * PID 懒解析：首次采样时扫描 /proc 匹配 cmdline（二进制名），失败静默重试
+     * 下轮；/proc 对同 UID 进程可读，其他 App 的 cmdline 读取失败自然跳过。
+     */
+    private fun refreshMemUsage() {
+        if (noxPid <= 0) noxPid = findNoxPid()
+        val kb = if (noxPid > 0) readMemKb(noxPid) else -1L
+        if (kb != _state.value.memUsageKb) {
+            transition(_state.value.copy(memUsageKb = kb))
+        }
+    }
+
+    /** 扫描 /proc 找 cmdline 含二进制名的进程 PID（找不到返回 -1）。 */
+    private fun findNoxPid(): Int {
+        val dirs = runCatching { File("/proc").listFiles() }.getOrNull() ?: return -1
+        for (dir in dirs) {
+            val pid = dir.name.toIntOrNull() ?: continue
+            val cmdline = runCatching {
+                // cmdline 为 NUL 分隔；整读后 contains 匹配二进制名即可
+                File(dir, "cmdline").readText()
+            }.getOrNull() ?: continue // 其他 UID 的进程读不到，自然过滤
+            if (cmdline.contains(QBittorrentSpec.BINARY_LIB_NAME)) return pid
+        }
+        return -1
+    }
+
+    /** 读 /proc/<pid>/status 的 VmRSS（KB）；不可得返回 -1。 */
+    private fun readMemKb(pid: Int): Long {
+        val status = runCatching { File("/proc/$pid/status").readText() }.getOrNull() ?: return -1L
+        val match = VmRssPattern.find(status) ?: return -1L
+        return match.groupValues[1].toLongOrNull() ?: -1L
     }
 
     /** 轮询 WebUI 版本接口直到返回或超时；返回版本文本（如 v5.2.3.10）或 null。 */
@@ -386,14 +449,14 @@ class QBittorrentManager @Inject constructor(
     }
 
     /**
-     * 固定凭据与保存路径经 WebUI API 下发（localhost 免认证；失败不影响运行态）。
+     * 凭据/保存路径/内存调优经 WebUI API 下发（localhost 免认证；失败不影响运行态）。
      *
      * 与配置文件层互补的运行态自愈：无论历史配置处于何种状态（如旧版本残留），
-     * WebUI 就绪后都强制对齐 admin/adminadmin 与 localhost 免认证；qb 会把结果
-     * 持久化回配置文件。
+     * WebUI 就绪后都对齐 admin + 密码（自定义或默认 adminadmin）、localhost 免认证、
+     * 保存路径、内存调优与 DHT 引导节点；qb 会把结果持久化回配置文件。
      */
-    private suspend fun applyStartupPreferences(port: Int, savePath: String) {
-        val json = QBittorrentSpec.buildStartupPreferencesJson(savePath)
+    private suspend fun applyStartupPreferences(port: Int, savePath: String, webUiPassword: String) {
+        val json = QBittorrentSpec.buildStartupPreferencesJson(savePath, webUiPassword)
         val ok = withContext(Dispatchers.IO) {
             httpPostForm(
                 "http://127.0.0.1:$port/api/v2/app/setPreferences",
@@ -401,9 +464,32 @@ class QBittorrentManager @Inject constructor(
             )
         }
         if (!ok) {
-            log(LoggableLevel.WARN, "下发固定凭据/保存路径失败（将沿用配置文件内的设置）")
+            log(LoggableLevel.WARN, "下发凭据/保存路径/内存调优失败（将沿用配置文件内的设置）")
         } else {
-            log(LoggableLevel.INFO, "固定凭据与保存路径已生效（admin/adminadmin）")
+            val passwordNote =
+                if (webUiPassword == QBittorrentSpec.DEFAULT_WEBUI_PASSWORD) "默认 adminadmin" else "自定义密码"
+            log(
+                LoggableLevel.INFO,
+                "凭据、保存路径与内存调优已生效（磁盘缓存上限 64MiB；密码：$passwordNote）",
+            )
+        }
+    }
+
+    /**
+     * 运行中实例即时改密（setPreferences web_ui_password，qb 哈希后立即生效并落盘）。
+     *
+     * 供「登录账号」菜单调用：DataStore 已保存新密码，本方法把运行态也同步过去；
+     * 实例未运行返回 false（下次启动时 ensureConfig 会写新哈希，无需失败处理）。
+     */
+    suspend fun applyWebUiPasswordAtRuntime(webUiPassword: String): Boolean {
+        val port = _state.value.webUiPort
+        if (_state.value.phase != Phase.RUNNING || process?.isAlive != true) return false
+        val json = QBittorrentSpec.buildPasswordOnlyJson(webUiPassword)
+        return withContext(Dispatchers.IO) {
+            httpPostForm(
+                "http://127.0.0.1:$port/api/v2/app/setPreferences",
+                "json=${URLEncoder.encode(json, "UTF-8")}",
+            )
         }
     }
 
@@ -411,15 +497,22 @@ class QBittorrentManager @Inject constructor(
      * 配置文件准备（进程启动前调用，无并发问题）：
      * - 先删 qBittorrent_new.conf：qb 原子保存的回退文件，正常退出时已被重命名
      *   消失；残留即崩溃/被杀现场（旧状态），且其**启动读取优先级高于正式配置**
-     *   ——不清会把种子/对齐的固定凭据劫持掉（凭据丢失 → nox 每次会话生成随机
-     *   临时密码 → admin/adminadmin 登录 401）；
+     *   ——不清会把种子/对齐的凭据劫持掉（凭据丢失 → nox 每次会话生成随机
+     *   临时密码 → 登录 401）；
      * - 不存在正式配置：写种子（含 WebUI 绑定，按 lanAccess 取 0.0.0.0/127.0.0.1，
-     *   及固定凭据 admin/adminadmin 的 PBKDF2 哈希，保存路径为公共下载目录）；
-     * - 已存在：只对齐 Address/Port/LocalHostAuth/Username/Password_PBKDF2 五个键
-     *   （QSettings 语义，键序无关），保留 nox 自行持久化的其他键——用户在 WebUI
-     *   改的设置不丢（凭据除外：固定默认值，每次启动重置）。
+     *   凭据 admin + 密码 [webUiPassword]（默认 adminadmin，自定义时为其哈希），
+     *   保存路径为公共下载目录，内存调优与 DHT 引导键）；
+     * - 已存在：对齐 Address/Port/LocalHostAuth/Username/Password_PBKDF2 五键
+     *   （QSettings 语义，键序无关）与内存调优/DHT 引导键，保留 nox 自行持久化
+     *   的其他键——用户在 WebUI 改的设置不丢（凭据/调优除外：每轮启动对齐）。
      */
-    private fun ensureConfig(profileDir: File, port: Int, lanAccess: Boolean, savePath: String) {
+    private fun ensureConfig(
+        profileDir: File,
+        port: Int,
+        lanAccess: Boolean,
+        savePath: String,
+        webUiPassword: String = QBittorrentSpec.DEFAULT_WEBUI_PASSWORD,
+    ) {
         val configDir = File(profileDir, "qBittorrent/config")
         val fallbackNew = File(configDir, "qBittorrent_new.conf")
         if (fallbackNew.isFile && runCatching { fallbackNew.delete() }.getOrDefault(false)) {
@@ -428,11 +521,13 @@ class QBittorrentManager @Inject constructor(
         val confFile = File(configDir, "qBittorrent.conf")
         if (!confFile.isFile) {
             confFile.parentFile?.mkdirs()
-            confFile.writeText(QBittorrentSpec.buildSeedConfig(port, savePath, lanAccess))
+            confFile.writeText(
+                QBittorrentSpec.buildSeedConfig(port, savePath, lanAccess, webUiPassword)
+            )
             return
         }
         confFile.writeText(
-            QBittorrentSpec.updateWebUiConfig(confFile.readText(), port, lanAccess)
+            QBittorrentSpec.updateWebUiConfig(confFile.readText(), port, lanAccess, webUiPassword)
         )
     }
 
@@ -478,5 +573,8 @@ class QBittorrentManager @Inject constructor(
         const val WEBUI_READY_TIMEOUT_MS = 20_000L
         const val FAST_FAIL_MS = 10_000L
         const val FAST_FAIL_LIMIT = 3
+
+        /** /proc/<pid>/status 中 VmRSS 行（单位固定 kB）。 */
+        val VmRssPattern = Regex("VmRSS:\\s+(\\d+) kB")
     }
 }

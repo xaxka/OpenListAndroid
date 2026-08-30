@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanToolAlt
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.ScreenLockPortrait
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -223,6 +224,17 @@ fun SettingsScreen(
                 icon = Icons.Outlined.OpenInBrowser,
                 value = state.autoOpenWeb,
                 onCheckedChange = viewModel::setAutoOpenWeb
+            )
+            SettingsSwitchPreference(
+                title = "禁用网页面板",
+                subtitle = if (state.webPanelDisabled) {
+                    "已禁用：「网页」标签页已隐藏，WebView 已释放，可省出可观内存；OpenList 网页可用系统浏览器访问"
+                } else {
+                    "隐藏「网页」标签页并释放 WebView 占用的内存；如需访问 OpenList 网页改用系统浏览器"
+                },
+                icon = Icons.Outlined.VisibilityOff,
+                value = state.webPanelDisabled,
+                onCheckedChange = viewModel::setWebPanelDisabled
             )
             // Blue Light UI：固定浅色、禁动态取色（原则 5），无主题开关项
             SettingsBasicPreference(

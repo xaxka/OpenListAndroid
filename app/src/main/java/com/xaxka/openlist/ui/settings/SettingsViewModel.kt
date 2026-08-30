@@ -12,6 +12,7 @@ import com.xaxka.openlist.data.log.QBittorrentEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
 import com.xaxka.openlist.qbt.QBittorrentManager
+import com.xaxka.openlist.qbt.QBittorrentSpec
 import com.xaxka.openlist.service.ServerManager
 import com.xaxka.openlist.service.ServerState
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -79,7 +80,10 @@ class SettingsViewModel @Inject constructor(
         val qbtPort: String = "",
         val qbtStatus: String = "",
         val qbtDetail: QBittorrentManager.Status = QBittorrentManager.Status(),
-        val qbtLanAccess: Boolean = false
+        val qbtLanAccess: Boolean = false,
+        val qbtPasswordCustom: Boolean = false,
+        // 通用：网页面板
+        val webPanelDisabled: Boolean = false
     )
 
     /** 一次性 Snackbar 事件（文案/时长/动作照源 GetSnackBar 调用点） */
@@ -115,7 +119,9 @@ class SettingsViewModel @Inject constructor(
         prefs.qbtEnabled,
         prefs.qbtWebUiPort,
         qBittorrent.state,
-        prefs.qbtLanAccess
+        prefs.qbtLanAccess,
+        prefs.qbtWebUiPassword,
+        prefs.webPanelDisabled
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         UiState(
@@ -140,7 +146,9 @@ class SettingsViewModel @Inject constructor(
             qbtPort = values[17] as String,
             qbtStatus = (values[18] as QBittorrentManager.Status).summary,
             qbtDetail = values[18] as QBittorrentManager.Status,
-            qbtLanAccess = values[19] as Boolean
+            qbtLanAccess = values[19] as Boolean,
+            qbtPasswordCustom = (values[20] as String).isNotBlank(),
+            webPanelDisabled = values[21] as Boolean
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
@@ -316,8 +324,8 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 局域网访问开关（绑定切换经重启 nox 生效）。登录凭据固定 admin/adminadmin
-     * （配置种子下发，无需设置）。
+     * 局域网访问开关（绑定切换经重启 nox 生效）。登录账号默认 admin/adminadmin
+     * （可在「登录账号」中修改密码）。
      */
     fun setQbtLanAccess(value: Boolean) {
         viewModelScope.launch {
@@ -326,8 +334,51 @@ class SettingsViewModel @Inject constructor(
                 snack(if (value) "已开启局域网访问，正在重启 qbittorrent…" else "已关闭局域网访问，正在重启 qbittorrent…")
                 qBittorrent.restart()
             } else {
-                snack(if (value) "已开启，重启 qbittorrent 后生效（其他设备用 admin/adminadmin 登录）" else "已关闭，重启 qbittorrent 后生效")
+                snack(if (value) "已开启，重启 qbittorrent 后生效（其他设备用 admin 登录，默认密码 adminadmin）" else "已关闭，重启 qbittorrent 后生效")
             }
+        }
+    }
+
+    /**
+     * 修改 WebUI 密码：存 DataStore；运行中实例经 setPreferences 即时生效并落盘，
+     * 未运行时下次启动随种子/对齐写入。qb 校验密码 ≥6 字符（界面已前置校验）。
+     */
+    fun setQbtWebUiPassword(password: String) {
+        viewModelScope.launch {
+            prefs.setQbtWebUiPassword(password)
+            val running = qBittorrent.state.value.phase == QBittorrentManager.Phase.RUNNING
+            if (running) {
+                snack("正在应用新密码…")
+                val ok = qBittorrent.applyWebUiPasswordAtRuntime(password)
+                snack(if (ok) "WebUI 密码已修改并立即生效" else "密码已保存；运行中实例应用失败，重启 qbittorrent 后生效")
+            } else {
+                snack("WebUI 密码已保存，qbittorrent 下次启动时生效")
+            }
+        }
+    }
+
+    /** 恢复默认密码 adminadmin（存空串；运行中实例同步重置）。 */
+    fun resetQbtWebUiPassword() {
+        viewModelScope.launch {
+            prefs.setQbtWebUiPassword("")
+            val running = qBittorrent.state.value.phase == QBittorrentManager.Phase.RUNNING
+            if (running) {
+                val ok = qBittorrent.applyWebUiPasswordAtRuntime(QBittorrentSpec.DEFAULT_WEBUI_PASSWORD)
+                snack(if (ok) "已恢复默认密码 adminadmin（立即生效）" else "已保存；运行中实例应用失败，重启 qbittorrent 后生效")
+            } else {
+                snack("已恢复默认密码 adminadmin（qbittorrent 下次启动时生效）")
+            }
+        }
+    }
+
+    /** 禁用/启用网页面板（隐藏「网页」标签页并释放 WebView；导航层响应，见 AppNavHost）。 */
+    fun setWebPanelDisabled(value: Boolean) {
+        viewModelScope.launch {
+            prefs.setWebPanelDisabled(value)
+            snack(
+                if (value) "已禁用网页面板：「网页」标签页已隐藏，WebView 已释放"
+                else "已启用网页面板"
+            )
         }
     }
 

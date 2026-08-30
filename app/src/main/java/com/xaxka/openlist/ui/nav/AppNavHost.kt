@@ -20,10 +20,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -80,26 +82,55 @@ fun AppNavHost(
         onDispose { webStateHolder.destroy() }
     }
 
-    val tabs = remember {
-        listOf(
-            TabItem(Routes.WEB, "网页", icon = Icons.Filled.Preview),
-            TabItem(Routes.HOME, "OpenList", logoRes = R.drawable.openlist_logo),
-            TabItem(Routes.SETTINGS, "设置", icon = Icons.Filled.Settings),
-        )
-    }
-
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
-    // 服务已运行且勾选「自动打开网页」→ 启动直达网页页（源 main.dart 行为）
+    // 禁用网页面板（设置 → 通用）：隐藏「网页」标签页、释放 WebView 内存
+    val webPanelDisabled by webViewModel.webPanelDisabled.collectAsStateWithLifecycle()
+
+    val tabs = remember(webPanelDisabled) {
+        if (webPanelDisabled) {
+            listOf(
+                TabItem(Routes.HOME, "OpenList", logoRes = R.drawable.openlist_logo),
+                TabItem(Routes.SETTINGS, "设置", icon = Icons.Filled.Settings),
+            )
+        } else {
+            listOf(
+                TabItem(Routes.WEB, "网页", icon = Icons.Filled.Preview),
+                TabItem(Routes.HOME, "OpenList", logoRes = R.drawable.openlist_logo),
+                TabItem(Routes.SETTINGS, "设置", icon = Icons.Filled.Settings),
+            )
+        }
+    }
+
+    // 服务已运行且勾选「自动打开网页」→ 启动直达网页页（源 main.dart 行为）；
+    // 网页面板禁用时跳过（标签页已隐藏，WebView 已释放）
     LaunchedEffect(Unit) {
         homeViewModel.openWebEvent.collect {
-            if (navController.currentDestination?.route == Routes.HOME) {
+            if (!webPanelDisabled && navController.currentDestination?.route == Routes.HOME) {
                 navController.navigate(Routes.WEB) {
                     launchSingleTop = true
                     popUpTo(Routes.HOME)
                 }
             }
+        }
+    }
+
+    // 禁用开关切到 ON：若正处网页页先回首页（打开这个开关 → 页面回到首页、网页页消失），
+    // 等导航重组完成（AndroidView 卸载 WebView）后销毁实例释放内存；
+    // 重新启用无需处理：标签页回归，下次进入 Web 页会新建 WebView
+    LaunchedEffect(webPanelDisabled) {
+        if (webPanelDisabled) {
+            if (navController.currentDestination?.route == Routes.WEB) {
+                navController.navigate(Routes.HOME) {
+                    launchSingleTop = true
+                    popUpTo(Routes.HOME) { saveState = false }
+                }
+                withFrameNanos { }
+                withFrameNanos { }
+                withFrameNanos { }
+            }
+            webStateHolder.destroy()
         }
     }
 

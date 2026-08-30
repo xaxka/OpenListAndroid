@@ -40,6 +40,10 @@ class WebViewModel @Inject constructor(
     val darkMode: StateFlow<Boolean> = prefsRepository.darkMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    /** 禁用网页面板（隐藏「网页」标签页并释放 WebView；导航层响应，见 AppNavHost） */
+    val webPanelDisabled: StateFlow<Boolean> = prefsRepository.webPanelDisabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /** 当前应加载地址：跟随 ServerManager.serverUrl，空回退默认 */
     val urlToLoad: StateFlow<String> = serverManager.serverUrl
         .map { it ?: DEFAULT_URL }

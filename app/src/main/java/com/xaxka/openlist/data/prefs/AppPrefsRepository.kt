@@ -48,6 +48,8 @@ class AppPrefsRepository @Inject constructor(
         val QBT_ENABLED = booleanPreferencesKey("isQbtEnabled")
         val QBT_WEBUI_PORT = stringPreferencesKey("qbtWebUiPort")
         val QBT_LAN_ACCESS = booleanPreferencesKey("qbtLanAccess")
+        val QBT_WEBUI_PASSWORD = stringPreferencesKey("qbtWebUiPassword")
+        val WEB_PANEL_DISABLED = booleanPreferencesKey("isWebPanelDisabled")
     }
 
     /** 默认数据目录：getExternalFilesDir("data") 绝对路径（不可用时回退 filesDir/data） */
@@ -160,10 +162,26 @@ class AppPrefsRepository @Inject constructor(
 
     suspend fun setQbtWebUiPort(value: String) = edit { it[Keys.QBT_WEBUI_PORT] = value }
 
-    /** 局域网访问 WebUI（0.0.0.0 监听 + 登录 admin/adminadmin；本机仍免认证），默认关闭 */
+    /** 局域网访问 WebUI（0.0.0.0 监听 + 登录；本机仍免认证），默认关闭 */
     val qbtLanAccess: Flow<Boolean> = data.map { it[Keys.QBT_LAN_ACCESS] ?: false }
 
     suspend fun setQbtLanAccess(value: Boolean) = edit { it[Keys.QBT_LAN_ACCESS] = value }
+
+    /**
+     * WebUI 自定义密码（明文存本机 DataStore，仅用于下发 qb；空 = 默认 adminadmin）。
+     *
+     * 明文存储的权衡：qb setPreferences API 只收明文（运行态改密/每轮启动对齐都
+     * 需要），存哈希则无法还原；DataStore 位于应用私有目录，导出/备份不包含
+     * （backup_rules 未纳入），风险面与本机 qb 配置等同。
+     */
+    val qbtWebUiPassword: Flow<String> = data.map { it[Keys.QBT_WEBUI_PASSWORD] ?: "" }
+
+    suspend fun setQbtWebUiPassword(value: String) = edit { it[Keys.QBT_WEBUI_PASSWORD] = value }
+
+    /** 禁用网页面板（隐藏「网页」标签页并释放 WebView 内存），默认关闭 */
+    val webPanelDisabled: Flow<Boolean> = data.map { it[Keys.WEB_PANEL_DISABLED] ?: false }
+
+    suspend fun setWebPanelDisabled(value: Boolean) = edit { it[Keys.WEB_PANEL_DISABLED] = value }
 
     // ---------- 内部 ----------
 
