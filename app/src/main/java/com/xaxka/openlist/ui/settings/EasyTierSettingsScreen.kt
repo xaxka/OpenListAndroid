@@ -393,12 +393,13 @@ private fun PeerOnlyBlock(peer: PeerDetail) {
  * 字体与标题/摘要行保持一致（默认 sans）——等宽字体的空格与中文均为全宽，
  * 视觉间隙偏大，与上两行不同步；地址已含协议前缀，无需等宽对齐。
  * 累计收发流量位于摘要行第一个延迟之后（按节点汇总）；直连/中继由 cost 体现。
+ * 地址为空白（双栈下个别连接可能无 remote_addr，pbjson 省略空串）时以隧道类型兜底，绝不渲染无地址的空行样式。
  */
 @Composable
 private fun ConnDetailLine(conn: PeerConn) {
     val text = buildString {
         append("  ")
-        append(conn.remoteAddr ?: conn.tunnelType.ifBlank { "tunnel" })
+        append(conn.remoteAddr?.takeIf { it.isNotBlank() } ?: conn.tunnelType.ifBlank { "tunnel" })
         if (conn.latencyMs > 0) append(" · ${conn.latencyMs}ms")
         append(" · 丢包 ${"%.1f".format(conn.lossRate * 100)}%")
     }

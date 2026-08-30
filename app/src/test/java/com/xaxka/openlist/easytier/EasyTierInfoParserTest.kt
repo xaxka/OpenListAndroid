@@ -197,6 +197,75 @@ class EasyTierInfoParserTest {
     }
 
     @Test
+    fun `双栈链路无地址的连接remoteAddr归一为null`() {
+        // pbjson 省略空串字段：remote_addr 为空 URL 时序列化为 {}，或字段整体缺失。
+        // 空串若原样保留，Kotlin 渲染端 ?: 不兜底 → 双栈 IPv4/IPv6 行之间出现无地址空行。
+        val json = networkInfoJson(
+            """
+            {
+              "running": true,
+              "peers": [{
+                "peer_id": 2,
+                "conns": [
+                  {"conn_id": "a", "tunnel": {"tunnel_type": "tcp", "remote_addr": {"url": "tcp://1.2.3.4:11010"}}},
+                  {"conn_id": "b", "tunnel": {"tunnel_type": "tcp", "remote_addr": {}}},
+                  {"conn_id": "c", "tunnel": {"tunnel_type": "tcp"}},
+                  {"conn_id": "d", "tunnel": {"tunnel_type": "udp", "remote_addr": {"url": "udp://[2408:8207::1]:11010"}}}
+                ]
+              }]
+            }
+            """.trimIndent()
+        )
+        val conns = EasyTierInfoParser.parse(json)!!.peers[0].conns
+        assertEquals("tcp://1.2.3.4:11010", conns[0].remoteAddr)
+        assertNull(conns[1].remoteAddr)
+        assertNull(conns[2].remoteAddr)
+        assertEquals("udp://[2408:8207::1]:11010", conns[3].remoteAddr)
+    }
+
+    @Test
+    fun `空白监听与公网IP条目被丢弃不渲染空段`() {
+        // 空串监听 URL 会导致「监听」多行文本出现空行；空串公网 IP 会导致逗号拼接出现空段
+        val json = networkInfoJson(
+            """
+            {
+              "running": true,
+              "my_node_info": {
+                "hostname": "openlist",
+                "listeners": [{"url": ""}, {"url": "  "}, {"url": "ring://abc"}],
+                "stun_info": {
+                  "udp_nat_type": "FullCone",
+                  "public_ip": ["", "1.2.3.4", "  ", "2408:8207::1"]
+                }
+              }
+            }
+            """.trimIndent()
+        )
+        val node = EasyTierInfoParser.parse(json)!!.myNode!!
+        assertEquals(listOf("ring://abc"), node.listeners)
+        assertEquals(listOf("1.2.3.4", "2408:8207::1"), node.stun!!.publicIps)
+    }
+
+    @Test
+    fun `主机名内嵌换行被清洗避免断行渲染`() {
+        val json = networkInfoJson(
+            """
+            {
+              "running": true,
+              "routes": [{
+                "peer_id": 2,
+                "hostname": "bad\nhost",
+                "next_hop_peer_id": 2,
+                "cost": 1
+              }]
+            }
+            """.trimIndent()
+        )
+        val route = EasyTierInfoParser.parse(json)!!.routes[0]
+        assertEquals("bad host", route.hostname)
+    }
+
+    @Test
     fun `listInstances结果判定实例存在`() {
         assertTrue(EasyTierInfoParser.containsInstance("""{"openlist":"some-uuid"}"""))
         assertFalse(EasyTierInfoParser.containsInstance("""{"other":"some-uuid"}"""))

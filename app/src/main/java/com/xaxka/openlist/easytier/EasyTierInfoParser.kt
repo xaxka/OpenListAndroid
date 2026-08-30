@@ -61,6 +61,7 @@ data class PeerDetail(
 data class PeerConn(
     val connId: String,
     val tunnelType: String,
+    /** 对端地址 URL；核心侧为空/空白串（pbjson 省略空串字段）时归一为 null，渲染走隧道类型兜底。 */
     val remoteAddr: String?,
     val lossRate: Float,
     val latencyMs: Long,
@@ -96,6 +97,11 @@ data class RouteDetail(
  *  （uuid 字符串）按标准 8-4-4-4-12 形式对应，用于判定 P2P 直连
  *
  * pbjson 按 proto 字段名输出（snake_case），这里仍做 camelCase 兜底。
+ *
+ * 展示清洗：pbjson 会省略值为默认（空串）的字段——TunnelInfo.remote_addr 为空 URL 时
+ * 序列化为 {}，解析得到空串而非 null。空串地址若原样渲染，IPv4/IPv6 双栈链路并存时
+ * 连接明细行会出现无地址的空行样式（Kotlin ?: 只对 null 兜底）。因此地址/主机名经
+ * [cleanText] 清洗：去内嵌换行与首尾空白，空白归一为 null 或整条丢弃。
  */
 internal object EasyTierInfoParser {
 
@@ -157,7 +163,7 @@ internal object EasyTierInfoParser {
                 udpNatType = strOf(it, "udp_nat_type"),
                 tcpNatType = strOf(it, "tcp_nat_type"),
                 publicIps = (it["public_ip"] as? JsonArray)
-                    ?.mapNotNull { p -> (p as? JsonPrimitive)?.content } ?: emptyList(),
+                    ?.mapNotNull { p -> cleanText((p as? JsonPrimitive)?.content) } ?: emptyList(),
             )
         }
         return MyNodeInfo(
@@ -166,8 +172,8 @@ internal object EasyTierInfoParser {
             version = strOf(node, "version"),
             virtualIpv4 = v4,
             listeners = (node["listeners"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonObject)?.let { u -> strOf(u, "url") } }
-                ?.filter { it.isNotEmpty() } ?: emptyList(),
+                ?.mapNotNull { (it as? JsonObject)?.let { u -> cleanText(strOf(u, "url")) } }
+                ?: emptyList(),
             stun = stun,
         )
     }
@@ -185,7 +191,9 @@ internal object EasyTierInfoParser {
 
     private fun parseConn(conn: JsonObject, directConnIds: Set<String>): PeerConn {
         val tunnel = objOrCamel(conn, "tunnel")
-        val remoteUrl = tunnel?.let { objOrCamel(it, "remote_addr") }?.let { strOf(it, "url") }
+        // pbjson 省略空串字段：remote_addr 可能为 {}（url 为空串被省略）。
+        // 空白地址归一为 null，让渲染端 ?: 兜底到隧道类型，避免双栈链路间出现无地址空行。
+        val remoteUrl = tunnel?.let { objOrCamel(it, "remote_addr") }?.let { cleanText(strOf(it, "url")) }
         val stats = objOrCamel(conn, "stats")
         val connId = strOf(conn, "conn_id")
         return PeerConn(
@@ -210,7 +218,7 @@ internal object EasyTierInfoParser {
         return RouteDetail(
             peerId = longOf(route, "peer_id") ?: 0L,
             ipv4 = v4,
-            hostname = strOf(route, "hostname"),
+            hostname = cleanText(strOf(route, "hostname")) ?: "",
             nextHopPeerId = longOf(route, "next_hop_peer_id") ?: 0L,
             cost = (route["cost"] as? JsonPrimitive)?.intOrNull ?: 0,
             pathLatencyMs = (route["path_latency"] as? JsonPrimitive)?.intOrNull ?: 0,
@@ -229,6 +237,16 @@ internal object EasyTierInfoParser {
 
     private fun strOf(obj: JsonObject, key: String): String =
         primOf(obj, key)?.content.orEmpty()
+
+    /**
+     * 展示用字符串清洗：去掉内嵌换行（防止 Compose Text 渲染出断行/空行）与首尾空白；
+     * 清洗后为空白则返回 null（调用方 ?: 兜底或 mapNotNull 丢弃该条目）。
+     */
+    private fun cleanText(value: String?): String? {
+        if (value == null) return null
+        val cleaned = value.replace("\r", " ").replace("\n", " ").trim()
+        return cleaned.ifEmpty { null }
+    }
 
     private fun longOf(obj: JsonObject, key: String): Long? =
         primOf(obj, key)?.longOrNull
