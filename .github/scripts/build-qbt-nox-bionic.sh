@@ -185,7 +185,8 @@ install_qt_host() {
   echo "aqt: $aqt_bin" >&2
   "$aqt_bin" install-qt -O "$PREFIX_DIR/qt-host" linux desktop "$QT_VER" \
     --archives qtbase qttools icu
-  test -x "$HOST_QT/bin/moc"
+  # Qt 6.8 起 host 工具（moc/rcc 等）安装在 libexec/；旧版本在 bin/
+  test -x "$HOST_QT/libexec/moc" || test -x "$HOST_QT/bin/moc"
   mark_done qt-host
 }
 
@@ -201,35 +202,38 @@ build_qt_android() {
     mkdir -p "$src"
     tar -xJf "$DL_DIR/qtbase-$QT_VER.tar.xz" --strip-components=1 -C "$src"
   fi
-  rm -rf "$WORK_DIR/qt"
-  cmake -S "$src" -B "$WORK_DIR/qt" \
-    -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX="$QT_PREFIX" \
-    -DQT_HOST_PATH="$HOST_QT" \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DQT_BUILD_EXAMPLES=OFF \
-    -DQT_BUILD_TESTS=OFF \
-    -DQT_FEATURE_optimize_size=ON \
-    -DQT_FEATURE_optimize_full=ON \
-    -DQT_FEATURE_openssl=linked \
-    -DQT_FEATURE_gui=OFF \
-    -DQT_FEATURE_widgets=OFF \
-    -DQT_FEATURE_dbus=OFF \
-    -DQT_FEATURE_testlib=OFF \
-    -DQT_FEATURE_animation=OFF \
-    -DQT_FEATURE_sql_sqlite=OFF \
-    -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
-    -DANDROID_ABI="$ABI" \
-    -DANDROID_PLATFORM="$ANDROID_PLATFORM" \
-    -DANDROID_STL=c++_static \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
-    -DCMAKE_PREFIX_PATH="$PREFIX_DIR" \
-    "${NDK_CCACHE_ARGS[@]}"
-  cmake --build "$WORK_DIR/qt" --parallel "$JOBS"
-  cmake --install "$WORK_DIR/qt"
-  rm -rf "$WORK_DIR/qt"
+  # 用 qtbase 自带 configure 包装脚本（与上游 cross_build.sh 同源）：
+  # 特性旗标由脚本翻译成正确的 QT_FEATURE_*，避免手写变量出错；
+  # -- 之后是透传给 CMake 的参数（NDK 工具链 + Android 三件套）。
+  local bdir="$WORK_DIR/qt"
+  rm -rf "$bdir"
+  mkdir -p "$bdir"
+  (
+    cd "$bdir"
+    "$src/configure" \
+      -prefix "$QT_PREFIX" \
+      -qt-host-path "$HOST_QT" \
+      -release -static -c++std c++17 \
+      -optimize-size \
+      -feature-optimize_full \
+      -openssl -openssl-linked \
+      -no-gui -no-dbus -no-widgets \
+      -no-feature-testlib \
+      -no-feature-animation \
+      -nomake examples -nomake tests \
+      -- \
+      -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+      -DANDROID_ABI="$ABI" \
+      -DANDROID_PLATFORM="$ANDROID_PLATFORM" \
+      -DANDROID_STL=c++_static \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
+      -DCMAKE_PREFIX_PATH="$PREFIX_DIR" \
+      "${NDK_CCACHE_ARGS[@]}"
+  )
+  cmake --build "$bdir" --parallel "$JOBS"
+  cmake --install "$bdir"
+  rm -rf "$bdir"
   mark_done qt-android
 }
 
