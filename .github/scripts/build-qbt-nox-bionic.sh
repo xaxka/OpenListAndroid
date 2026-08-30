@@ -10,7 +10,9 @@
 # DNS64 / VPN DNS），DHT/peer/tracker 全部直连，DNS 与 DHT 双双根治。
 # 依赖链与上游 cross_build.sh 对齐（Qt6 静态 + openssl-linked + libtorrent RC_1_2 +
 # Boost 纯头文件 + zlib-ng(compat)），仅把 musl 静态换成 bionic 动态：
-# 产物是 PIE 可执行文件，动态依赖仅为 bionic 系统库（libc/libm/libdl/liblog 等）。
+# 产物是 PIE 可执行文件，动态依赖为 bionic 系统库 + libc++_shared.so
+# （Qt 在 Android 强制 c++_shared；该 .so 随产物一并输出，由 App 经
+# LD_LIBRARY_PATH=nativeLibraryDir 提供给子进程）。
 #
 # 用法（由 .github/workflows/build.yml 调用）：
 #   bash build-qbt-nox-bionic.sh <ABI> <OPENSSL_TARGET> <OUT_DIR> <PREFIX_DIR>
@@ -77,8 +79,9 @@ mark_done()  { touch "$PREFIX_DIR/.stage-$1"; }
 
 mkdir -p "$OUT_DIR" "$PREFIX_DIR" "$SRC_DIR" "$DL_DIR" "$WORK_DIR"
 
-# bionic 系统库白名单：产物 NEEDED 只允许出现在这里（动态链接核心契约）
-ALLOWED_NEEDED='^(libc\.so|libm\.so|libdl\.so|liblog\.so|libandroid\.so)$'
+# 动态依赖白名单：bionic 系统库 + libc++_shared.so（Qt 在 Android 强制 c++_shared，
+# 该库随产物输出并由 App 在拉起子进程时经 LD_LIBRARY_PATH 提供）
+ALLOWED_NEEDED='^(libc\.so|libm\.so|libdl\.so|liblog\.so|libandroid\.so|libc\+\+_shared\.so)$'
 
 log() { printf '\n========== %s ==========\n' "$*" >&2; }
 fetch() {  # fetch <url> <dest>
@@ -91,7 +94,7 @@ cmake_common=(
   -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE"
   -DANDROID_ABI="$ABI"
   -DANDROID_PLATFORM="$ANDROID_PLATFORM"
-  -DANDROID_STL=c++_static
+  -DANDROID_STL=c++_shared
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON
   -DCMAKE_INSTALL_PREFIX="$PREFIX_DIR"
 )
@@ -228,7 +231,7 @@ build_qt_android() {
       -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
       -DANDROID_ABI="$ABI" \
       -DANDROID_PLATFORM="$ANDROID_PLATFORM" \
-      -DANDROID_STL=c++_static \
+      -DANDROID_STL=c++_shared \
       -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
       -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
@@ -285,7 +288,7 @@ build_qbittorrent() {
     -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
     -DANDROID_ABI="$ABI" \
     -DANDROID_PLATFORM="$ANDROID_PLATFORM" \
-    -DANDROID_STL=c++_static \
+    -DANDROID_STL=c++_shared \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX="$PREFIX_DIR" \
     -DQT_HOST_PATH="$HOST_QT" \
@@ -305,6 +308,20 @@ install_output() {
   local out="$OUT_DIR/$ABI/libqbittorrent-nox.so"
   mkdir -p "$OUT_DIR/$ABI"
 
+  # 捆绑 libc++_shared.so（Qt 强制 c++_shared；App 侧以 LD_LIBRARY_PATH 指向同目录）
+  local triple
+  case "$ABI" in
+    arm64-v8a) triple=aarch64-linux-android ;;
+    armeabi-v7a) triple=armv7a-linux-androideabi ;;
+    x86_64) triple=x86_64-linux-android ;;
+  esac
+  local stl="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$triple/libc++_shared.so"
+  if [ ! -f "$stl" ]; then
+    stl="$(find "$NDK" -type f -name libc++_shared.so -path "*$triple*" | head -1)"
+  fi
+  test -n "$stl" && test -f "$stl" || { echo "ERROR: libc++_shared.so not found in NDK" >&2; exit 1; }
+  install -m 644 "$stl" "$OUT_DIR/$ABI/libc++_shared.so"
+
   # strip 缩体积（无调试需求的发行形态）
   "$NDK_HOST_PREBUILT/bin/llvm-strip" "$bin"
 
@@ -323,7 +340,7 @@ install_output() {
     exit 1
   fi
 
-  # 契约校验 2：动态依赖只能是 bionic 系统库（出现 Qt/ssl/libc++_shared 等即失败）
+  # 契约校验 2：动态依赖只能是 bionic 系统库 + libc++_shared.so（出现 Qt/ssl 等即失败）
   local bad=""
   bad="$("$NDK_HOST_PREBUILT/bin/llvm-readelf" -d "$bin" \
     | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' \

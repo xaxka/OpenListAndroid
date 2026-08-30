@@ -195,6 +195,14 @@ jobs:
           restore-keys: |
             qbt-ccache-${{ matrix.ABI }}-v1-
 
+      # qtbase 的 QtPlatformAndroid.cmake 要求 find_package(Java REQUIRED)
+      - name: Setup JDK (temurin 17)
+        if: steps.qbt-out-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Build qbittorrent-enhanced-nox (bionic)
         if: steps.qbt-out-cache.outputs.cache-hit != 'true'
         run: |
@@ -361,8 +369,8 @@ jobs:
           path: app/src/main/jniLibs
           merge-multiple: true
 
-      # 动态链接契约校验：只允许依赖 bionic 系统库（libc/libm/libdl/liblog/libandroid）；
-      # 出现 Qt/OpenSSL/libc++_shared 等即说明静态链接不完整，打进 APK 必然无法 exec。
+      # 动态链接契约校验：只允许依赖 bionic 系统库与 libc++_shared.so（Qt 强制 c++_shared，
+      # 随产物捆绑）；出现 Qt/OpenSSL 等即说明静态链接不完整，打进 APK 必然无法 exec。
       - name: Verify qBittorrent nox libs
         run: |
           set -eu
@@ -370,9 +378,11 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86_64; do
             so="app/src/main/jniLibs/$abi/libqbittorrent-nox.so"
             test -s "$so" || { echo "ERROR: missing libqbittorrent-nox.so for $abi"; exit 1; }
+            test -s "app/src/main/jniLibs/$abi/libc++_shared.so" \
+              || { echo "ERROR: missing libc++_shared.so for $abi"; exit 1; }
             needed=$(readelf -d "$so" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')
             echo "$abi NEEDED: $needed"
-            bad=$(echo "$needed" | tr ' ' '\n' | grep -Ev '^(libc\.so|libm\.so|libdl\.so|liblog\.so|libandroid\.so)$' | grep -v '^$' || true)
+            bad=$(echo "$needed" | tr ' ' '\n' | grep -Ev '^(libc\.so|libm\.so|libdl\.so|liblog\.so|libandroid\.so|libc\+\+_shared\.so)$' | grep -v '^$' || true)
             if [ -n "$bad" ]; then
               echo "ERROR: unexpected NEEDED in $abi: $bad"
               exit 1

@@ -5,8 +5,10 @@ package com.xaxka.openlist.qbt
  *
  * 内置方式：CI 交叉编译 bionic 动态链接二进制（NDK r27c + Qt6 静态 + openssl-linked
  * + libtorrent 1.2，见 .github/scripts/build-qbt-nox-bionic.sh），改名
- * `libqbittorrent-nox.so` 打进 jniLibs（nativeLibraryDir 允许 exec；动态依赖仅为
- * bionic 系统库），运行期经 ProcessBuilder 以子进程方式拉起，随 OpenList 服务启停。
+ * `libqbittorrent-nox.so` 打进 jniLibs（nativeLibraryDir 允许 exec；动态依赖为
+ * bionic 系统库 + libc++_shared.so，后者随 jniLibs 一并打包，由
+ * [QBittorrentManager] 经 LD_LIBRARY_PATH 提供），运行期经 ProcessBuilder 以
+ * 子进程方式拉起，随 OpenList 服务启停。
  *
  * 上游：c0re100/qBittorrent-Enhanced-Edition release-5.2.3.10
  * （arm64-v8a / armeabi-v7a / x86_64，需 Android 7.0/API 24+）。

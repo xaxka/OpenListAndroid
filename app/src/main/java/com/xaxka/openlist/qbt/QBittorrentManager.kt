@@ -211,6 +211,11 @@ class QBittorrentManager @Inject constructor(
                 ).apply {
                     redirectErrorStream(true)
                     environment().apply {
+                        // bionic 动态链接：libc++_shared.so 与二进制同目录（jniLibs 解压后的
+                        // nativeLibraryDir），经 LD_LIBRARY_PATH 提供给动态链接器
+                        appContext.applicationInfo?.nativeLibraryDir
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { put("LD_LIBRARY_PATH", it) }
                         // Qt 默认找 /tmp（Android 不存在）与 $HOME，全部指到应用目录
                         put("TMPDIR", cacheDir.absolutePath)
                         put("TEMP", cacheDir.absolutePath)
