@@ -48,8 +48,6 @@ class AppPrefsRepository @Inject constructor(
         val QBT_ENABLED = booleanPreferencesKey("isQbtEnabled")
         val QBT_WEBUI_PORT = stringPreferencesKey("qbtWebUiPort")
         val QBT_LAN_ACCESS = booleanPreferencesKey("qbtLanAccess")
-        val QBT_USERNAME = stringPreferencesKey("qbtUsername")
-        val QBT_PASSWORD = stringPreferencesKey("qbtPassword")
     }
 
     /** 默认数据目录：getExternalFilesDir("data") 绝对路径（不可用时回退 filesDir/data） */
@@ -148,9 +146,9 @@ class AppPrefsRepository @Inject constructor(
 
     suspend fun setEasytierLocalPublicKey(value: String) = edit { it[Keys.EASYTIER_LOCAL_PUBLIC_KEY] = value }
 
-    // ---------- qBittorrent（BT 下载） ----------
+    // ---------- qbittorrent ----------
 
-    /** qBittorrent 内置 nox 总开关（默认关闭） */
+    /** qbittorrent 内置 nox 总开关（默认关闭） */
     val qbtEnabled: Flow<Boolean> = data.map { it[Keys.QBT_ENABLED] ?: false }
 
     /** WebUI 端口（字符串存储；空白回退默认端口，解析见 QBittorrentSpec.parsePort） */
@@ -162,24 +160,10 @@ class AppPrefsRepository @Inject constructor(
 
     suspend fun setQbtWebUiPort(value: String) = edit { it[Keys.QBT_WEBUI_PORT] = value }
 
-    /** 局域网访问 WebUI（0.0.0.0 监听 + 用户名/密码登录；本机仍免认证），默认关闭 */
+    /** 局域网访问 WebUI（0.0.0.0 监听 + 登录 admin/adminadmin；本机仍免认证），默认关闭 */
     val qbtLanAccess: Flow<Boolean> = data.map { it[Keys.QBT_LAN_ACCESS] ?: false }
 
     suspend fun setQbtLanAccess(value: Boolean) = edit { it[Keys.QBT_LAN_ACCESS] = value }
-
-    /** WebUI 登录用户名（仅局域网访问需要），默认 admin */
-    val qbtUsername: Flow<String> = data.map { (it[Keys.QBT_USERNAME] ?: "").ifBlank { "admin" } }
-
-    suspend fun setQbtUsername(value: String) = edit { it[Keys.QBT_USERNAME] = value }
-
-    /**
-     * WebUI 登录密码（仅局域网访问需要；空 = 未设置）。
-     * 明文存储于应用私有 DataStore——与 EasyTier 网络密钥同级安全边界；
-     * 运行期经 localhost 免认证通道 setPreferences 下发，nox 侧转 PBKDF2 哈希。
-     */
-    val qbtPassword: Flow<String> = data.map { it[Keys.QBT_PASSWORD] ?: "" }
-
-    suspend fun setQbtPassword(value: String) = edit { it[Keys.QBT_PASSWORD] = value }
 
     // ---------- 内部 ----------
 

@@ -249,7 +249,7 @@ fun SettingsScreen(
                 onTap = { navController?.navigate(Routes.SETTINGS_EASYTIER) }
             )
             SettingsBasicPreference(
-                title = "BT 下载（qBittorrent Enhanced）",
+                title = "qbittorrent",
                 subtitle = state.qbtStatus,
                 leading = { SettingsPreferenceIcon(Icons.Outlined.CloudDownload) },
                 trailing = { SettingsChevron() },

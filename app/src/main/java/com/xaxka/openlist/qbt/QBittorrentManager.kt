@@ -29,17 +29,21 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * qBittorrent Enhanced（nox）进程管理（BT 下载扩展功能）。
+ * qbittorrent（qbittorrent-enhanced-nox）进程管理。
  *
  * 内置二进制为 bionic 动态链接构建（见 [QBittorrentSpec]），随 OpenList 服务启停：
  * 生命周期由 [com.xaxka.openlist.service.ServerManager] 驱动（RUNNING 时按偏好拉起，
  * 停止流程即回收），与 EasyTier 内网映射同一模式。
  *
- * 启动流程：配置准备（WebUI 仅回环 + 免认证；顺带清理旧版残留代理键）→ 拉起子进程
- * （--profile 独立目录，TMPDIR/HOME 指向应用目录）→ 轮询 WebUI 就绪 →
- * setPreferences 下发保存路径（域名解析由 bionic getaddrinfo→netd 原生完成，
- * DHT(UDP)/peer/tracker 全部直连，无需代理组件）→ 进入运行态周期巡检
- * （进程存活 + WebUI 版本）。
+ * 启动流程：配置准备（WebUI 仅回环 + 免认证 + 固定凭据 admin/adminadmin；顺带清理
+ * 旧版残留代理键）→ 拉起子进程（--profile 独立目录，TMPDIR/HOME/TZ 指向应用
+ * 目录/UTC）→ 轮询 WebUI 就绪 → setPreferences 下发保存路径（域名解析由 bionic
+ * getaddrinfo→netd 原生完成，DHT(UDP)/peer/tracker 全部直连，无需代理组件）→
+ * 进入运行态周期巡检（进程存活 + WebUI 版本）。
+ *
+ * TZ=UTC：内置 Qt 的时区后端为 tzfile 版（读 TZ/POSIX 规则，Android 无
+ * /etc/localtime），显式指定避免无效时区告警；WebUI 时间戳由浏览器端格式化
+ * （epoch 秒），不受影响，仅 qbittorrent.log 文件内为 UTC 时间。
  *
  * 自愈：进程意外退出（OOM/厂商冻结后杀）时自动重启，连续快速失败 3 次转 ERROR
  * 不再自动重试（避免风暴），回前台时 ensureRecovered 兜底再试。
@@ -178,8 +182,6 @@ class QBittorrentManager @Inject constructor(
 
         val port = QBittorrentSpec.parsePort(prefs.qbtWebUiPort.first())
         val lanAccess = prefs.qbtLanAccess.first()
-        val username = prefs.qbtUsername.first().ifBlank { "admin" }
-        val password = prefs.qbtPassword.first()
         val profileDir = File(appContext.filesDir, "qbt-profile")
         val saveDir = File(
             appContext.getExternalFilesDir(null) ?: appContext.filesDir,
@@ -187,8 +189,9 @@ class QBittorrentManager @Inject constructor(
         )
         runCatching { saveDir.mkdirs() }
 
-        // 配置：首次写种子；已存在则对齐 WebUI 绑定/端口/用户名（保留 nox 持久化的其他键与密码哈希）
-        runCatching { ensureConfig(profileDir, port, username, lanAccess) }
+        // 配置：首次写种子；已存在则对齐 WebUI 绑定/端口与固定凭据（保留 nox
+        // 持久化的其他键）
+        runCatching { ensureConfig(profileDir, port, lanAccess) }
             .onFailure { log(LoggableLevel.WARN, "写入/更新配置失败：${it.message}") }
 
         transition(
@@ -221,6 +224,10 @@ class QBittorrentManager @Inject constructor(
                         put("TEMP", cacheDir.absolutePath)
                         put("TMP", cacheDir.absolutePath)
                         put("HOME", profileDir.absolutePath)
+                        // 内置 Qt 时区后端为 tzfile 版（Android 无 /etc/localtime），
+                        // 显式 UTC 保证有效时区（POSIX 规则，零偏移）；WebUI 时间
+                        // 由浏览器端格式化 epoch，不受影响
+                        put("TZ", "UTC")
                     }
                 }
                 pb.start()
@@ -262,10 +269,6 @@ class QBittorrentManager @Inject constructor(
             log(LoggableLevel.INFO, "WebUI 已就绪（$ready）")
             // 生效保存路径（每轮启动都下发，与旧行为一致）
             applySavePathPreferences(port, saveDir.absolutePath)
-            // 局域网模式：下发登录用户名/密码（qb 侧 PBKDF2 哈希持久化；每轮重下发幂等）
-            if (lanAccess && password.isNotEmpty()) {
-                applyAuth(port, username, password)
-            }
         }
         fastFailCount = 0
         startMonitor()
@@ -287,7 +290,7 @@ class QBittorrentManager @Inject constructor(
         }
         process = null
         transition(Status(Phase.STOPPED))
-        log(LoggableLevel.INFO, "BT 下载已停止")
+        log(LoggableLevel.INFO, "qbittorrent 已停止")
     }
 
     private fun startMonitor() {
@@ -375,11 +378,13 @@ class QBittorrentManager @Inject constructor(
 
     /**
      * 配置文件准备（进程启动前调用，无并发问题）：
-     * - 不存在：写种子（含 WebUI 绑定，按 lanAccess 取 0.0.0.0/127.0.0.1）；
-     * - 已存在：只对齐 Address/Port/Username 三个键（QSettings 语义，键序无关），
-     *   保留 nox 自行持久化的其他偏好与密码哈希——用户在 WebUI 改的设置不丢。
+     * - 不存在：写种子（含 WebUI 绑定，按 lanAccess 取 0.0.0.0/127.0.0.1，及固定
+     *   凭据 admin/adminadmin 的 PBKDF2 哈希）；
+     * - 已存在：只对齐 Address/Port/LocalHostAuth/Username/Password_PBKDF2 五个键
+     *   （QSettings 语义，键序无关），保留 nox 自行持久化的其他键——用户在 WebUI
+     *   改的设置不丢（凭据除外：固定默认值，每次启动重置）。
      */
-    private fun ensureConfig(profileDir: File, port: Int, username: String, lanAccess: Boolean) {
+    private fun ensureConfig(profileDir: File, port: Int, lanAccess: Boolean) {
         val confFile = File(profileDir, "qBittorrent/config/qBittorrent.conf")
         val savePath = File(
             appContext.getExternalFilesDir(null) ?: appContext.filesDir,
@@ -391,24 +396,8 @@ class QBittorrentManager @Inject constructor(
             return
         }
         confFile.writeText(
-            QBittorrentSpec.updateWebUiConfig(confFile.readText(), port, username, lanAccess)
+            QBittorrentSpec.updateWebUiConfig(confFile.readText(), port, lanAccess)
         )
-    }
-
-    /** 局域网登录凭据经 WebUI API 下发（localhost 免认证；失败仅告警不阻断）。 */
-    private suspend fun applyAuth(port: Int, username: String, password: String) {
-        val json = QBittorrentSpec.buildAuthJson(username, password)
-        val ok = withContext(Dispatchers.IO) {
-            httpPostForm(
-                "http://127.0.0.1:$port/api/v2/app/setPreferences",
-                "json=${URLEncoder.encode(json, "UTF-8")}",
-            )
-        }
-        if (!ok) {
-            log(LoggableLevel.WARN, "下发 WebUI 登录凭据失败（局域网访问将使用旧凭据）")
-        } else {
-            log(LoggableLevel.INFO, "局域网登录凭据已生效（用户名 $username）")
-        }
     }
 
     private fun transition(next: Status) {

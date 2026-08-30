@@ -125,7 +125,7 @@ class ServerManager @Inject constructor(
                 if (st == ServerState.STOPPED) _serverUrl.value = null
             }
         }
-        // EasyTier 内网映射 / qBittorrent（BT 下载）随服务启停：RUNNING 时按偏好拉起，
+        // EasyTier 内网映射 / qbittorrent 随服务启停：RUNNING 时按偏好拉起，
         // 进入停止流程即回收。偏好开关由各 Manager 自行读取，这里只转发服务状态。
         scope.launch {
             core.state.collect { st ->

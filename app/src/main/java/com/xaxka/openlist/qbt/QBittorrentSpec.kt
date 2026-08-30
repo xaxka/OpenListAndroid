@@ -1,7 +1,7 @@
 package com.xaxka.openlist.qbt
 
 /**
- * qBittorrent Enhanced（qbittorrent-enhanced-nox）固定规格与配置模板。
+ * qbittorrent（qbittorrent-enhanced-nox）固定规格与配置模板。
  *
  * 内置方式：CI 交叉编译 bionic 动态链接二进制（NDK r27c + Qt6 静态 + openssl-linked
  * + libtorrent 1.2，见 .github/scripts/build-qbt-nox-bionic.sh），改名
@@ -18,8 +18,10 @@ package com.xaxka.openlist.qbt
  * 无需任何代理/转发组件（旧 musl 静态版的 LocalSocks5Proxy 方案已废弃）。
  * [QBittorrentManager] 启动时会清理旧版本残留的代理配置（见 [updateWebUiConfig]）。
  *
+ * 凭据策略：固定 qb 默认账号 admin / adminadmin（PBKDF2 哈希随配置种子下发并
+ * 每次启动前对齐，WebUI 内改动会被下次启动重置）；App 不提供账号密码修改功能。
  * 访问模式：默认仅本机（127.0.0.1 + localhost 免认证）；可切换局域网模式
- * （0.0.0.0 监听 + 用户名/密码登录，本机仍免认证）。
+ * （0.0.0.0 监听 + 登录 admin/adminadmin，本机仍免认证）。
  */
 object QBittorrentSpec {
 
@@ -28,6 +30,18 @@ object QBittorrentSpec {
 
     /** 内置上游版本（展示用；与 CI 下载的 release tag 一致）。 */
     const val EMBEDDED_VERSION = "5.2.3.10"
+
+    /** WebUI 登录用户名（qb 默认，固定不可改）。 */
+    const val WEBUI_USERNAME = "admin"
+
+    /**
+     * WebUI 登录密码的 PBKDF2 哈希（qb 兼容格式 `salt:hash`，PBKDF2-HMAC-SHA512、
+     * 100000 迭代、64 字节输出，见 qbt Utils::Password::PBKDF2::generate）。
+     * 明文即 qb 默认密码 adminadmin；盐为固定常量（默认密码本就公开，无保密需求）。
+     * INI 值带引号经 @ByteArray() 包裹（QSettings 的 QByteArray 序列化格式，对齐 nox 实测输出）。
+     */
+    private const val WEBUI_PASSWORD_PBKDF2 =
+        "\"@ByteArray(QUJFaU0wUlZabmVJbWFxN3pOM3Uvdz09OlgwNEJYd2xDWWxUejJEL0FoQjhzT2JTa05uRElDUDZGcVJDZ1padjdqb1NsdTNEa040aWs0MUc3VitaYVNLbkVFbmQyZVRXSzNPaXVxUWpnTU9HU253PT0=)\""
 
     /** WebUI 默认端口（避免 8080 常见冲突与 OpenList 的 5244）。 */
     const val DEFAULT_WEBUI_PORT = 8085
@@ -54,11 +68,13 @@ object QBittorrentSpec {
      * - [Preferences] WebUI\Address/Port/LocalHostAuth/Username：localhost 免认证
      *   （App 内 WebView/系统浏览器直达，无需临时密码）；
      *   Address 按 [lanAccess] 取 0.0.0.0（局域网可访问）或 127.0.0.1（仅本机）；
+     * - [Preferences] WebUI\Password_PBKDF2：qb 5.2 凭据为空时 WebUI 直接报错
+     *   （"Credentials are not set"，不再回退默认密码），必须随种子写入
+     *   admin/adminadmin 的哈希；
      * - [BitTorrent] Session\DefaultSavePath：默认保存路径（应用专属外部目录）。
      *
      * 代理不写入：bionic 版 DNS 走系统原生，App 管理策略为无代理；旧版本残留的
      * 代理键由 [updateWebUiConfig] 在每次启动前清理。
-     * 密码不写入种子：PBKDF2 哈希由 nox 生成，统一走 setPreferences（web_ui_password）。
      */
     fun buildSeedConfig(webUiPort: Int, savePath: String, lanAccess: Boolean = false): String = buildString {
         append("[BitTorrent]\n")
@@ -68,24 +84,29 @@ object QBittorrentSpec {
         append("WebUI\\Address=").append(if (lanAccess) "0.0.0.0" else "127.0.0.1").append('\n')
         append("WebUI\\Port=").append(webUiPort).append('\n')
         append("WebUI\\LocalHostAuth=false\n")
-        append("WebUI\\Username=openlist\n")
+        append("WebUI\\Username=").append(WEBUI_USERNAME).append('\n')
+        append("WebUI\\Password_PBKDF2=").append(WEBUI_PASSWORD_PBKDF2).append('\n')
     }
 
     /**
-     * 既有 qBittorrent.conf 的更新（lanAccess/端口/用户名变更时，进程已停止的状态下
-     * 直接改文件；保留 nox 自行持久化的其他键，例如密码哈希）：
-     * - 对齐 [Preferences] 节内的 Address/Port/Username 行；键不存在则追加到该节末尾，
+     * 既有 qBittorrent.conf 的更新（lanAccess/端口变更时，进程已停止的状态下
+     * 直接改文件；保留 nox 自行持久化的其他键）：
+     * - 对齐 [Preferences] 节内的 Address/Port 行；键不存在则追加到该节末尾，
      *   节不存在则创建（qb 的 QSettings 兼容键序无关）；
+     * - 凭据强制对齐默认 admin/adminadmin（用户名与密码哈希均重写，App 不提供
+     *   修改入口；WebUI 内改动也会在下次启动被重置）；
      * - 清理代理键（升级迁移 + 无代理策略）：[Network] Proxy\*（qb 5.2 键位，旧
      *   SOCKS5 方案残留；不清则 DHT/UDP 流量继续交给已不存在的代理被丢弃）与
      *   [Preferences] Session\Proxy*（qb ≤5.0 旧键位，顺手清理）。
      */
-    fun updateWebUiConfig(content: String, webUiPort: Int, username: String, lanAccess: Boolean): String {
+    fun updateWebUiConfig(content: String, webUiPort: Int, lanAccess: Boolean): String {
         val address = if (lanAccess) "0.0.0.0" else "127.0.0.1"
         val updates = mapOf(
             "WebUI\\Address" to address,
             "WebUI\\Port" to webUiPort.toString(),
-            "WebUI\\Username" to escapePath(username).ifEmpty { "openlist" },
+            "WebUI\\Username" to WEBUI_USERNAME,
+            "WebUI\\Password_PBKDF2" to WEBUI_PASSWORD_PBKDF2,
+            "WebUI\\LocalHostAuth" to "false",
         )
         // 先按节过滤代理键，再做 WebUI 键对齐
         val stripped = mutableListOf<String>()
@@ -131,16 +152,6 @@ object QBittorrentSpec {
         }
         return lines.joinToString("\n").trimEnd('\n') + "\n"
     }
-
-    /**
-     * 局域网模式的认证偏好 JSON（setPreferences POST）。
-     *
-     * web_ui_password 传明文由 qb 侧做 PBKDF2 哈希并持久化（每次启动重下发，
-     * 哈希盐随机刷新，幂等）；web_ui_username 同步对齐 App 侧设置。
-     */
-    fun buildAuthJson(username: String, password: String): String =
-        "{\"web_ui_username\":\"${escapeJson(username)}\"," +
-            "\"web_ui_password\":\"${escapeJson(password)}\"}"
 
     /**
      * 保存路径偏好 JSON（setPreferences POST；每轮启动下发，与旧行为一致）。

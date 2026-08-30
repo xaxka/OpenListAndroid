@@ -55,7 +55,7 @@ object Routes {
     /** 内网映射「映射状态」详情页：本节点（点「映射状态」进入，返回回到内网映射页） */
     const val SETTINGS_EASYTIER_STATUS = "settings/easytier/status"
 
-    /** 设置子页面：BT 下载（qBittorrent Enhanced，扩展功能） */
+    /** 设置子页面：qbittorrent（内置 qBittorrent Enhanced nox） */
     const val SETTINGS_QBT = "settings/qbt"
 }
 

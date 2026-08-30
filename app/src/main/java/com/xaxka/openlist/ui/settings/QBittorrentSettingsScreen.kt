@@ -18,7 +18,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.OpenInBrowser
-import androidx.compose.material.icons.outlined.Password
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SaveAlt
@@ -55,14 +54,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 设置子页面：BT 下载（内置 qBittorrent Enhanced nox）。
+ * 设置子页：qbittorrent（内置 qBittorrent Enhanced nox）。
  *
  * 内置 bionic 动态链接二进制随 APK 打包（jniLibs 改名 libqbittorrent-nox.so），
  * 随 OpenList 服务启停；WebUI 默认仅监听 127.0.0.1 且 localhost 免鉴权，
  * 由「打开 WebUI」跳系统浏览器管理。可开启「局域网访问」：监听切 0.0.0.0，
- * 其他设备经 http://<本机IP>:<端口> 登录（用户名/密码；本机仍免登录），
- * 开启前强制设置密码，凭据经 localhost 通道下发。
- * 域名解析走系统原生（bionic getaddrinfo→netd，兼容 Private DNS/DNS64），
+ * 其他设备经 http://<本机IP>:<端口> 登录（admin/adminadmin，固定默认凭据；
+ * 本机仍免登录）。
+ * 域名解析走系统原生（bionic getaddrinfo→netd，兼容 Private DNS/DNS64）。
  * tracker/DHT/peer 全部直连，详见 QBittorrentManager。
  */
 @Composable
@@ -73,10 +72,6 @@ fun QBittorrentSettingsScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showPortDialog by remember { mutableStateOf(false) }
-    var showUsernameDialog by remember { mutableStateOf(false) }
-    var showPasswordDialog by remember { mutableStateOf(false) }
-    // 密码框确认后是否自动开启局域网访问（开关守卫流程复用同一对话框）
-    var pendingLanEnable by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -119,7 +114,7 @@ fun QBittorrentSettingsScreen(
     ) {
         Column(Modifier.fillMaxSize()) {
             SettingsSubPageTopBar(
-                title = "BT 下载（qBittorrent Enhanced）",
+                title = "qbittorrent",
                 onBack = { navController.popBackStack() }
             )
             Column(
@@ -129,7 +124,7 @@ fun QBittorrentSettingsScreen(
                     .padding(bottom = 24.dp)
             ) {
                 SettingsSwitchPreference(
-                    title = "启用 BT 下载",
+                    title = "启用 qbittorrent",
                     subtitle = "随服务启停；内置 qbittorrent-enhanced-nox v${QBittorrentSpec.EMBEDDED_VERSION}",
                     icon = Icons.Outlined.CloudDownload,
                     value = state.qbtEnabled,
@@ -153,40 +148,23 @@ fun QBittorrentSettingsScreen(
                     subtitle = if (state.qbtLanAccess) {
                         "已开放：其他设备访问 http://<本机IP>:${state.qbtPort.ifBlank { QBittorrentSpec.DEFAULT_WEBUI_PORT.toString() }} 并登录（本机仍免登录）"
                     } else {
-                        "默认关闭（仅本机 127.0.0.1 可访问）；开启需设置登录密码"
+                        "默认关闭（仅本机 127.0.0.1 可访问）"
                     },
                     icon = Icons.Outlined.Lan,
                     value = state.qbtLanAccess,
-                    onCheckedChange = { value ->
-                        if (value && state.qbtPassword.isBlank()) {
-                            // 无密码不开放 0.0.0.0：先引导设置密码（确认后自动开启）
-                            pendingLanEnable = true
-                            showPasswordDialog = true
-                        } else {
-                            viewModel.setQbtLanAccess(value)
-                        }
-                    }
+                    onCheckedChange = viewModel::setQbtLanAccess
                 )
                 SettingsBasicPreference(
-                    title = "登录用户名",
-                    subtitle = state.qbtUsername,
+                    title = "登录账号",
+                    subtitle = "admin / adminadmin（qb 默认，固定不可改；本机访问免登录）",
                     leading = { SettingsPreferenceIcon(Icons.Outlined.Person) },
-                    onTap = { showUsernameDialog = true }
-                )
-                SettingsBasicPreference(
-                    title = "登录密码",
-                    subtitle = if (state.qbtPassword.isBlank()) "未设置（开启局域网访问前必须设置）" else "已设置（点击修改）",
-                    leading = { SettingsPreferenceIcon(Icons.Outlined.Password) },
-                    onTap = {
-                        pendingLanEnable = false
-                        showPasswordDialog = true
-                    }
+                    onTap = {}
                 )
 
                 SettingsDividerPreference("运行状态")
 
                 SettingsBasicPreference(
-                    title = "重启 BT 下载",
+                    title = "重启 qbittorrent",
                     subtitle = "异常退出或无响应时手动重启恢复",
                     leading = { SettingsPreferenceIcon(Icons.Outlined.Refresh) },
                     onTap = viewModel::restartQbt
@@ -231,40 +209,9 @@ fun QBittorrentSettingsScreen(
             }
         )
     }
-
-    if (showUsernameDialog) {
-        QbtTextDialog(
-            title = "登录用户名",
-            initial = state.qbtUsername,
-            placeholder = "admin",
-            onDismiss = { showUsernameDialog = false },
-            onConfirm = { text ->
-                showUsernameDialog = false
-                viewModel.setQbtUsername(text.trim().ifBlank { "admin" })
-            }
-        )
-    }
-
-    if (showPasswordDialog) {
-        QbtPasswordDialog(
-            title = if (pendingLanEnable) "设置登录密码并开启局域网访问" else "登录密码",
-            onDismiss = {
-                showPasswordDialog = false
-                pendingLanEnable = false
-            },
-            onConfirm = { password ->
-                showPasswordDialog = false
-                viewModel.setQbtPassword(password)
-                if (pendingLanEnable) {
-                    viewModel.setQbtLanAccess(true)
-                }
-                pendingLanEnable = false
-            }
-        )
-    }
 }
 
-/** 只读运行状态区：进程状态 / 版本 / WebUI / 保存路径 / DNS 代理。 */
+/** 只读运行状态区：进程状态 / 版本 / WebUI / 保存路径。 */
 @Composable
 private fun QbtStatusSection(
     detail: QBittorrentManager.Status,
@@ -279,7 +226,7 @@ private fun QbtStatusSection(
         if (detail.phase == QBittorrentManager.Phase.RUNNING) {
             QbtStatusKV(
                 "监听",
-                if (detail.lanAccess) "0.0.0.0（局域网需登录，本机 localhost 免登录）" else "仅本机（localhost 免鉴权）",
+                if (detail.lanAccess) "0.0.0.0（局域网需登录 admin/adminadmin，本机 localhost 免登录）" else "仅本机（localhost 免鉴权）",
             )
             QbtStatusKV("域名解析", "系统原生（bionic netd，兼容 Private DNS / DNS64）")
         }
@@ -325,50 +272,7 @@ private fun QbtStatusKV(label: String, value: String) {
     }
 }
 
-/** 密码输入对话框：掩码输入，空确认时提示（不关闭）。 */
-@Composable
-private fun QbtPasswordDialog(
-    title: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    var text by rememberSaveable { mutableStateOf("") }
-    var error by rememberSaveable { mutableStateOf(false) }
-    SettingsAlertDialog(
-        onDismissRequest = onDismiss,
-        title = title,
-        content = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = {
-                    text = it
-                    error = false
-                },
-                label = { Text(title, style = InputLabel) },
-                placeholder = { Text("至少 6 位，避免弱密码", style = InputHint) },
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                isError = error,
-                supportingText = if (error) {
-                    { Text("密码过短，至少 6 位", style = InputHint) }
-                } else null,
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        actions = {
-            SettingsDialogTextButton(text = "取消", onClick = onDismiss)
-            SettingsDialogTextButton(
-                text = "确定",
-                onClick = {
-                    if (text.length >= 6) onConfirm(text)
-                    else error = true
-                }
-            )
-        }
-    )
-}
-
-/** 端口/用户名等单行文本输入对话框（无密码掩码；空值提交回退默认端口）。 */
+/** 端口等单行文本输入对话框（无密码掩码；空值提交回退默认端口）。 */
 @Composable
 private fun QbtTextDialog(
     title: String,

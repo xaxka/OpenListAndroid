@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * QBittorrentSpec 单测：配置种子与偏好 JSON 的生成契约。
  * 对照 qbittorrent-enhanced-nox 5.2.3.10 实测（profile/qBittorrent/config/qBittorrent.conf）：
- * - [Preferences] WebUI\Address/Port/LocalHostAuth/Username
+ * - [Preferences] WebUI\Address/Port/LocalHostAuth/Username/Password_PBKDF2
  * - [BitTorrent] Session\DefaultSavePath
  * - 旧代理键（[Network] Proxy\*、[Preferences] Session\Proxy*）由 updateWebUiConfig 清理
  */
@@ -34,6 +34,9 @@ class QBittorrentSpecTest {
         assertTrue(conf.contains("WebUI\\Address=127.0.0.1"))
         assertTrue(conf.contains("WebUI\\Port=18085"))
         assertTrue(conf.contains("WebUI\\LocalHostAuth=false"))
+        // 固定凭据：admin/adminadmin（qb 5.2 凭据为空时 WebUI 报错，必须随种子写入）
+        assertTrue(conf.contains("WebUI\\Username=admin"))
+        assertTrue(conf.contains("WebUI\\Password_PBKDF2=\"@ByteArray("))
         // 默认保存路径写入 Session\DefaultSavePath
         assertTrue(conf.contains("Session\\DefaultSavePath=/data/user/0/app/files/dl"))
     }
@@ -60,10 +63,11 @@ class QBittorrentSpecTest {
         assertTrue(local.contains("WebUI\\Address=127.0.0.1"))
         val lan = QBittorrentSpec.buildSeedConfig(8085, save, lanAccess = true)
         assertTrue(lan.contains("WebUI\\Address=0.0.0.0"))
-        // 两种模式都保持 localhost 免认证与初始用户名
+        // 两种模式都保持 localhost 免认证与固定凭据
         for (conf in listOf(local, lan)) {
             assertTrue(conf.contains("WebUI\\LocalHostAuth=false"))
             assertTrue(conf.contains("WebUI\\Port=8085"))
+            assertTrue(conf.contains("WebUI\\Username=admin"))
             assertTrue(conf.contains("Session\\DefaultSavePath=$save"))
         }
     }
@@ -90,15 +94,16 @@ class QBittorrentSpecTest {
             Proxy\Profiles\BitTorrent=true
             Cookie\Name=keep
         """.trimIndent()
-        val updated = QBittorrentSpec.updateWebUiConfig(existing, webUiPort = 9090, username = "xaxka", lanAccess = true)
+        val updated = QBittorrentSpec.updateWebUiConfig(existing, webUiPort = 9090, lanAccess = true)
 
-        // 三个键被替换/更新
+        // 绑定/端口替换，凭据强制对齐默认 admin/adminadmin（含旧哈希重置）
         assertTrue(updated.contains("WebUI\\Address=0.0.0.0"))
         assertTrue(updated.contains("WebUI\\Port=9090"))
-        assertTrue(updated.contains("WebUI\\Username=xaxka"))
-        // 其他节与键原样保留（含 nox 持久化的密码哈希与无关键）
+        assertTrue(updated.contains("WebUI\\Username=admin"))
+        assertTrue(updated.contains("WebUI\\Password_PBKDF2=\"@ByteArray("))
+        assertFalse(updated.contains("bas64hash"))
+        // 其他节与键原样保留
         assertTrue(updated.contains("Session\\Port=55599"))
-        assertTrue(updated.contains("WebUI\\Password_PBKDF2=\"@ByteArray(bas64hash)\""))
         assertTrue(updated.contains("Cookie\\Name=keep"))
         // 代理键全部清理（升级迁移：旧 SOCKS5 方案残留，不清则 DHT/UDP 流量继续被丢弃）
         assertFalse(updated.contains("Proxy\\Type"))
@@ -113,17 +118,11 @@ class QBittorrentSpecTest {
     @Test
     fun `更新无Preferences节的配置时创建该节`() {
         val existing = "[BitTorrent]\nSession\\Port=1\n"
-        val updated = QBittorrentSpec.updateWebUiConfig(existing, webUiPort = 8085, username = "admin", lanAccess = false)
+        val updated = QBittorrentSpec.updateWebUiConfig(existing, webUiPort = 8085, lanAccess = false)
         assertTrue(updated.contains("[Preferences]"))
         assertTrue(updated.contains("WebUI\\Address=127.0.0.1"))
         assertTrue(updated.contains("WebUI\\Port=8085"))
+        assertTrue(updated.contains("WebUI\\Username=admin"))
         assertTrue(updated.contains("Session\\Port=1"))
-    }
-
-    @Test
-    fun `认证JSON包含用户名与明文密码`() {
-        val json = QBittorrentSpec.buildAuthJson("admin", "s3cret\"pw")
-        assertTrue(json.contains("\"web_ui_username\":\"admin\""))
-        assertTrue(json.contains("\"web_ui_password\":\"s3cret\\\"pw\""))
     }
 }
