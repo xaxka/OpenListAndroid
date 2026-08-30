@@ -37,8 +37,13 @@ import javax.crypto.spec.PBEKeySpec
  * 可被内核自由回收。相关键位对照 release-5.2.3.10 sessionimpl.cpp
  * （BITTORRENT_SESSION_KEY）与 appcontroller.cpp。
  *
- * DHT：显式开启并扩展引导路由器列表（qb 默认 3 个，部分网络不可达时路由表
- * 长期近似空 → WebUI 显示仅 1 节点；多路由器冗余提升引导成功率）。
+ * DHT：显式开启；引导路由器固定官方 3 节点（见 [DHT_BOOTSTRAP_NODES]；
+ * 移动网络下 0 节点为运营商干扰，非客户端问题）。
+ *
+ * GeoIP：禁用（ResolvePeerCountries=false，qb 默认 true）。Android 裸进程经
+ * qtbase 补丁后系统 CA 列表为空，db-ip.com 的 HTTPS 证书链校验必失败，启动期
+ * 连刷「无法加载/SSL 错误/无法下载 IP 地理数据库」三条错误日志；该库仅服务
+ * WebUI peer 列表的国旗展示（纯装饰），禁用后噪声清零、省一次联网尝试。
  */
 object QBittorrentSpec {
 
@@ -67,12 +72,17 @@ object QBittorrentSpec {
         "\"@ByteArray(QUJFaU0wUlZabmVJbWFxN3pOM3Uvdz09OlgwNEJYd2xDWWxUejJEL0FoQjhzT2JTa05uRElDUDZGcVJDZ1padjdqb1NsdTNEa040aWs0MUc3VitaYVNLbkVFbmQyZVRXSzNPaXVxUWpnTU9HU253PT0=)\""
 
     /**
-     * DHT 引导路由器（qb 默认 3 个 + uTorrent/Vuze 路由器冗余；格式与 qb
-     * DEFAULT_DHT_BOOTSTRAP_NODES 一致：逗号分隔 host:port，LT 解析容忍空格）。
-     * 既有安装经启动 setPreferences 下发更新；新安装随种子写入。
+     * DHT 引导路由器（格式与 qb DEFAULT_DHT_BOOTSTRAP_NODES 一致：逗号分隔
+     * host:port，LT 解析容忍空格）。取官方 3 节点：libtorrent 官方（25401）+，
+     * Transmission 与 BitTorrent 主路由器；uTorrent/Vuze 冗余节点（router.
+     * utorrent.com、dht.aelitis.com）已按需求移除。既有安装经启动
+     * setPreferences 下发更新；新安装随种子写入。
+     *
+     * 注：国内移动数据网络下 DHT 长期 0 节点属运营商对 UDP 的干扰（WiFi 正常），
+     * 非引导节点或客户端问题。
      */
     const val DHT_BOOTSTRAP_NODES =
-        "dht.libtorrent.org:25401, dht.transmissionbt.com:6881, router.bittorrent.com:6881, router.utorrent.com:6881, dht.aelitis.com:6881"
+        "dht.libtorrent.org:25401, dht.transmissionbt.com:6881, router.bittorrent.com:6881"
 
     /** WebUI 默认端口（避免 8080 常见冲突与 OpenList 的 5244）。 */
     const val DEFAULT_WEBUI_PORT = 8085
@@ -252,6 +262,9 @@ object QBittorrentSpec {
         append("WebUI\\LocalHostAuth=false\n")
         append("WebUI\\Username=").append(WEBUI_USERNAME).append('\n')
         append("WebUI\\Password_PBKDF2=").append(buildWebUiPasswordIniValue(webUiPassword)).append('\n')
+        // GeoIP 禁用（qb 默认 true）：Android 无系统 CA 文件，db-ip.com 证书链校验
+        // 必失败且连刷三条错误日志；国旗展示纯装饰，禁用（见文件头注释）
+        append("Connection\\ResolvePeerCountries=false\n")
     }
 
     /**
@@ -263,6 +276,8 @@ object QBittorrentSpec {
      *   自定义密码时为该密码的哈希——用户改密后配置层与 DataStore 保持一致）；
      * - 对齐内存调优与 DHT 引导键（[BitTorrent] Session\*，与启动 setPreferences
      *   双层互补；用户在 WebUI 关掉 DHT 不被此层覆盖——仅对齐引导节点列表）；
+     * - 对齐 GeoIP 禁用键（[Preferences] Connection\ResolvePeerCountries=false，
+     *   升级迁移：旧版本未写入该键，qb 默认 true 会在启动期连刷三条下载错误）；
      * - 清理代理键（升级迁移 + 无代理策略）：[Network] Proxy\*（qb 5.2 键位，旧
      *   SOCKS5 方案残留；不清则 DHT/UDP 流量继续交给已不存在的代理被丢弃）与
      *   [Preferences] Session\Proxy*（qb ≤5.0 旧键位，顺手清理）。
@@ -280,6 +295,7 @@ object QBittorrentSpec {
             "WebUI\\Username" to WEBUI_USERNAME,
             "WebUI\\Password_PBKDF2" to buildWebUiPasswordIniValue(webUiPassword),
             "WebUI\\LocalHostAuth" to "false",
+            "Connection\\ResolvePeerCountries" to "false",
         )
         val sessionUpdates = MEMORY_TUNING_INI + ("Session\\DHTBootstrapNodes" to DHT_BOOTSTRAP_NODES)
         // 先按节过滤代理键，再做键对齐
@@ -338,7 +354,9 @@ object QBittorrentSpec {
      * 运行态自愈层：本机回环免认证（LocalHostAuth=false）下调用，无论配置文件
      * 处于何种历史状态，都对齐账号 admin、密码 [webUiPassword]（默认
      * adminadmin，自定义密码时为用户所设——qb 侧自行 PBKDF2 哈希落盘）、
-     * localhost 免认证、保存路径、内存调优与 DHT 引导节点。
+     * localhost 免认证、保存路径、内存调优与 DHT 引导节点；并对齐 GeoIP
+     * 禁用（resolve_peer_countries=false，qb 默认 true 会下载国旗数据库，
+     * Android 无系统 CA 必失败——见文件头注释）。
      *
      * 不携带 enable_dht 布尔：尊重用户在 WebUI 的 DHT 开关选择（种子层已按
      * qb 默认值开启）；只对齐引导节点列表（基础设施配置）。
@@ -353,6 +371,7 @@ object QBittorrentSpec {
         append("{\"web_ui_username\":\"").append(escapeJson(WEBUI_USERNAME))
         append("\",\"web_ui_password\":\"").append(escapeJson(webUiPassword))
         append("\",\"bypass_local_auth\":true")
+        append(",\"resolve_peer_countries\":false")
         append(",\"save_path\":\"").append(escapeJson(savePath)).append("\"")
         MEMORY_TUNING_JSON.forEach { (k, v) -> append(",\"").append(k).append("\":").append(v) }
         append(",\"dht_bootstrap_nodes\":\"").append(escapeJson(DHT_BOOTSTRAP_NODES)).append("\"}")

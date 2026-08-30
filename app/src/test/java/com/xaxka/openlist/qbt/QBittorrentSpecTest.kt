@@ -14,6 +14,8 @@ import javax.crypto.spec.PBEKeySpec
  * 对照 qbittorrent-enhanced-nox 5.2.3.10 实测（profile/qBittorrent/config/qBittorrent.conf）：
  * - [Preferences] WebUI\Address/Port/LocalHostAuth/Username/Password_PBKDF2
  * - [BitTorrent] Session\DefaultSavePath、内存调优（DiskCache* 等）与 DHT 引导键
+ * - [Preferences] Connection\ResolvePeerCountries=false（GeoIP 禁用：Android 无
+ *   系统 CA，db-ip.com 下载必失败且连刷错误日志，国旗展示纯装饰）
  * - 旧代理键（[Network] Proxy\*、[Preferences] Session\Proxy*）由 updateWebUiConfig 清理
  */
 class QBittorrentSpecTest {
@@ -54,12 +56,19 @@ class QBittorrentSpecTest {
         assertTrue(conf.contains("Session\\DiskIOWriteMode=1"))
         // per-peer 发送缓冲上限（qb 默认 500KB → 256KB）
         assertTrue(conf.contains("Session\\SendBufferWatermark=256"))
-        // DHT：显式开启 + 扩展引导路由器（默认 3 个 → 5 个冗余）
+        // DHT：显式开启 + 官方 3 节点引导列表（uTorrent/Vuze 冗余节点已移除）
         assertTrue(conf.contains("Session\\DHTEnabled=true"))
-        assertTrue(conf.contains("Session\\DHTBootstrapNodes=dht.libtorrent.org:25401"))
-        assertTrue(conf.contains("router.bittorrent.com:6881"))
-        assertTrue(conf.contains("router.utorrent.com:6881"))
-        assertTrue(conf.contains("dht.aelitis.com:6881"))
+        assertTrue(
+            conf.contains(
+                "Session\\DHTBootstrapNodes=dht.libtorrent.org:25401, dht.transmissionbt.com:6881, " +
+                    "router.bittorrent.com:6881",
+            ),
+        )
+        assertFalse(conf.contains("router.utorrent.com"))
+        assertFalse(conf.contains("dht.aelitis.com"))
+        // GeoIP 禁用（qb 默认 true）：Android 无系统 CA，db-ip.com 证书链校验必失败，
+        // 启动期连刷三条错误日志；国旗展示纯装饰，禁用
+        assertTrue(conf.contains("Connection\\ResolvePeerCountries=false"))
     }
 
     @Test
@@ -135,10 +144,16 @@ class QBittorrentSpecTest {
         assertTrue(json.contains("\"disk_io_read_mode\":1"))
         assertTrue(json.contains("\"disk_io_write_mode\":1"))
         assertTrue(json.contains("\"send_buffer_watermark\":256"))
-        // DHT 引导节点对齐（不携带 enable_dht 布尔：尊重用户 WebUI 开关）
-        assertTrue(json.contains("\"dht_bootstrap_nodes\":\"dht.libtorrent.org:25401"))
-        assertTrue(json.contains("router.bittorrent.com:6881"))
+        // DHT 引导节点对齐（官方 3 节点；不携带 enable_dht 布尔：尊重用户 WebUI 开关）
+        assertTrue(
+            json.contains(
+                "\"dht_bootstrap_nodes\":\"dht.libtorrent.org:25401, dht.transmissionbt.com:6881, " +
+                    "router.bittorrent.com:6881\"",
+            ),
+        )
         assertFalse(json.contains("\"dht\":"))
+        // GeoIP 禁用对齐（qb 默认 true 会下载国旗数据库，Android 无系统 CA 必失败）
+        assertTrue(json.contains("\"resolve_peer_countries\":false"))
         // bionic 版 DNS 走系统原生，App 管理策略为无代理：不下发任何代理字段
         assertFalse(json.contains("proxy"))
 
@@ -219,6 +234,8 @@ class QBittorrentSpecTest {
         // DHT 引导节点对齐；DHTEnabled 保持用户选择（false，不强制覆盖）
         assertTrue(updated.contains("Session\\DHTBootstrapNodes="))
         assertTrue(updated.contains("Session\\DHTEnabled=false"))
+        // GeoIP 禁用键对齐（升级迁移：旧版本未写入，qb 默认 true 启动即刷三条下载错误）
+        assertTrue(updated.contains("Connection\\ResolvePeerCountries=false"))
         // 其他节与键原样保留
         assertTrue(updated.contains("Session\\Port=55599"))
         assertTrue(updated.contains("Cookie\\Name=keep"))

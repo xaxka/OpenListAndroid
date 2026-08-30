@@ -154,12 +154,13 @@ jobs:
           path: OpenListAndroid
 
       # 成品内容寻址缓存：全部版本 ref 未变直接复用，跳过整条编译链
+      # （-bare-v6：libtorrent 新增 Android enum_routes 假监听失败告警抑制补丁）
       - name: Cache qbt-nox output
         id: qbt-out-cache
         uses: actions/cache@v4
         with:
           path: qbt-out
-          key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-bare-v5
+          key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-bare-v6
 
       - name: Setup Android NDK (r27c)
         if: steps.qbt-out-cache.outputs.cache-hit != 'true'

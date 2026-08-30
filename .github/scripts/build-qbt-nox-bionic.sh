@@ -307,6 +307,67 @@ patch("src/network/kernel/qnetworkproxy_android.cpp", [
 PYEOF
 }
 
+# ---------------------------------------------------------------- libtorrent 补丁
+#
+# Android 假「监听 IP 失败」告警抑制：
+# libtorrent RC_1_2 在 TORRENT_ANDROID && __ANDROID_API__ >= 24 时，enum_routes()
+# 为硬编码存根（enum_net.cpp 尾部：netlink 对 app 进程不可用，上游有意放弃），
+# 恒返回 operation_not_supported；reopen_listen_sockets() 把这个预期内失败发成
+# listen_failed_alert（device 为空、endpoint 默认构造），qBittorrent 侧即误报：
+#   Failed to listen on IP. IP: "0.0.0.0". Port: "TCP/0".
+#   Reason: "Operation not supported on transport endpoint"
+# 实际监听经 unspecified-address 回退正常工作（同函数 Android 分支本就以
+# routes 为空为前提保留 0.0.0.0 绑定，qb WebUI/DHT/传输均正常）。补丁：Android
+# 下跳过枚举且不发告警，其他平台行为不变。
+patch_libtorrent_android() {
+  local src="$1"
+  python3 - "$src" <<'PYEOF'
+import sys
+
+root = sys.argv[1]
+
+def patch(rel_path, replacements):
+    path = f"{root}/{rel_path}"
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    for old, new in replacements:
+        if new in text:
+            continue  # 已应用（幂等：脚本可能对同一源码树多次执行）
+        count = text.count(old)
+        if count != 1:
+            sys.exit(f"libtorrent android patch: pattern count={count} in {rel_path}: {old[:72]!r}")
+        text = text.replace(old, new, 1)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    print(f"libtorrent android patch: {rel_path} OK")
+
+patch("src/session_impl.cpp", [
+    ("\t\t\tauto const routes = enum_routes(m_io_service, ec);\n"
+     "\t\t\tif (ec && m_alerts.should_post<listen_failed_alert>())\n"
+     "\t\t\t{\n"
+     "\t\t\t\tm_alerts.emplace_alert<listen_failed_alert>(\"\"\n"
+     "\t\t\t\t\t, operation_t::enum_route, ec, socket_type_t::tcp);\n"
+     "\t\t\t}\n",
+     "#if defined TORRENT_ANDROID && __ANDROID_API__ >= 24\n"
+     "\t\t\t// Android API >= 24: enum_routes() is a hardcoded stub that always\n"
+     "\t\t\t// returns operation_not_supported (netlink is unavailable to app\n"
+     "\t\t\t// processes; see enum_net.cpp). Listening still works via the\n"
+     "\t\t\t// unspecified-address fallback, so this failure is expected and\n"
+     "\t\t\t// benign -- suppress the listen_failed_alert that qBittorrent\n"
+     "\t\t\t// otherwise logs as a CRITICAL \"Failed to listen on IP\" error.\n"
+     "\t\t\tauto const routes = std::vector<ip_route>();\n"
+     "#else\n"
+     "\t\t\tauto const routes = enum_routes(m_io_service, ec);\n"
+     "\t\t\tif (ec && m_alerts.should_post<listen_failed_alert>())\n"
+     "\t\t\t{\n"
+     "\t\t\t\tm_alerts.emplace_alert<listen_failed_alert>(\"\"\n"
+     "\t\t\t\t\t, operation_t::enum_route, ec, socket_type_t::tcp);\n"
+     "\t\t\t}\n"
+     "#endif\n"),
+])
+PYEOF
+}
+
 build_qt_android() {
   stage_done qt-android && return
   log "构建 qtbase $QT_VER（Android $ABI 静态：Core/Network/Sql/Xml）"
@@ -368,6 +429,8 @@ build_libtorrent() {
     git -C "$src" checkout -q FETCH_HEAD
     git -C "$src" log -1 --oneline >&2 || true
   fi
+  # Android 假「监听 IP 失败」告警抑制（enum_routes 存根，见函数头注释）
+  patch_libtorrent_android "$src"
   rm -rf "$WORK_DIR/libtorrent"
   # NDK 工具链把 FIND_ROOT_PATH_MODE_* 设为 ONLY（find 仅在 NDK 内搜索），
   # 必须把依赖 prefix 追加进 CMAKE_FIND_ROOT_PATH（工具链会 APPEND NDK），
