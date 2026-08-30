@@ -27,10 +27,15 @@ import javax.crypto.spec.PBEKeySpec
  * 访问模式：默认仅本机（127.0.0.1 + localhost 免认证）；可切换局域网模式
  * （0.0.0.0 监听 + 登录，本机仍免认证）。
  *
- * 内存优化（手机场景，经种子与 setPreferences 双层下发，见 [MEMORY_TUNING_INI]）：
- * libtorrent 1.2 磁盘缓存默认 -1（按物理内存自适应，8GB 设备可达数百 MB～GB 级），
- * 固定上限 64MiB；同步收窄 IO 线程/文件池/校验内存。相关键位对照
- * release-5.2.3.10 sessionimpl.cpp（BITTORRENT_SESSION_KEY）与 appcontroller.cpp。
+ * 内存优化（面向 100M 宽带场景：下载峰值 ≈ 12.5MB/s，磁盘压力极低，
+ * 经种子与 setPreferences 双层下发，见 [MEMORY_TUNING_INI]）：
+ * libtorrent 1.2 磁盘缓存默认 -1（按物理内存自适应，8GB 设备可膨胀数百 MB～GB 级），
+ * 固定上限 16MiB（≈ 100Mbps 下 1.3 秒的写入量，足够合并写盘；继续压到 0 也可行，
+ * 但保留小块用户态缓存可减少校验/做种重读的 syscall 放大）；校验内存 8MiB、
+ * IO 线程 2 条（100Mbps ≈ 每秒百次磁盘作业，双线程绰绰有余）；磁盘 IO 模式
+ * 钉住 EnableOSCache——缓存落在可回收的内核 page cache，RSS 更低且系统压力下
+ * 可被内核自由回收。相关键位对照 release-5.2.3.10 sessionimpl.cpp
+ * （BITTORRENT_SESSION_KEY）与 appcontroller.cpp。
  *
  * DHT：显式开启并扩展引导路由器列表（qb 默认 3 个，部分网络不可达时路由表
  * 长期近似空 → WebUI 显示仅 1 节点；多路由器冗余提升引导成功率）。
@@ -75,31 +80,46 @@ object QBittorrentSpec {
     /**
      * 内存调优参数（INI 键 = [BitTorrent] Session\*，JSON 键 = setPreferences）。
      *
-     * - DiskCacheSize/disk_cache：libtorrent 1.2 磁盘缓存上限（MiB）。qb 默认 -1
-     *   = 按物理内存自适应，手机大内存下缓存可膨胀到数百 MB；固定 64MiB 足够
-     *   常规下载且 RSS 可控（本项为内存优化主力）；
-     * - DiskCacheTTL/disk_cache_ttl：缓存条目存活秒数（qb 默认 60，显式钉住）；
-     * - AsyncIOThreadsCount/async_io_threads：磁盘 IO 线程数（qb 默认 10，
-     *   手机存储带宽有限，4 条已饱和，省线程栈与调度开销）；
-     * - FilePoolSize/file_pool_size：LRU 打开文件句柄池（qb 默认 100 → 40）；
+     * 面向「100M 宽带够用」目标（下载峰值 ≈ 12.5MB/s）的深度裁剪：
+     *
+     * - DiskCacheSize/disk_cache：libtorrent 1.2 用户态磁盘缓存上限（MiB）。
+     *   qb 默认 -1 = 按物理内存自适应，手机大内存下可膨胀数百 MB；16MiB ≈
+     *   100Mbps 下 1.3 秒的写入量，足够合并写盘与校验重读（本项为内存优化
+     *   主力：相比自适应值可省几十～几百 MB RSS）；
      * - CheckingMemUsageSize/checking_memory_use：校验（hash check）内存 MiB
-     *   （qb 默认 32 → 16，手机上校验吞吐受存储限制而非内存）。
+     *   （qb 默认 32 → 8；校验吞吐受手机存储限制而非内存，8MiB 足够）；
+     * - AsyncIOThreadsCount/async_io_threads：磁盘 IO 线程数（qb 默认 10 → 2；
+     *   100Mbps ≈ 每秒百次磁盘作业，双线程绰绰有余，省线程栈与调度开销）；
+     * - DiskIOReadMode/DiskIOWriteMode = 1（EnableOSCache）：钉住 qb 默认的
+     *   系统缓存模式——磁盘缓存交给内核 page cache（可回收、不计入进程 RSS），
+     *   避免用户误设 O_DIRECT 造成性能下降；
+     * - SendBufferWatermark/send_buffer_watermark：per-peer 发送缓冲上限 KB
+     *   （qb 默认 500 → 256；对 100Mbps 无影响，降低多 peer 时的内核内存压力）；
+     * - DiskCacheTTL/disk_cache_ttl（qb 默认 60，显式钉住）与
+     *   FilePoolSize/file_pool_size（100 → 40，句柄池，再低会引发做种库频繁
+     *   开关文件抖动）保留。
      */
     private val MEMORY_TUNING_INI = mapOf(
-        "Session\\DiskCacheSize" to "64",
+        "Session\\DiskCacheSize" to "16",
         "Session\\DiskCacheTTL" to "60",
-        "Session\\AsyncIOThreadsCount" to "4",
+        "Session\\AsyncIOThreadsCount" to "2",
         "Session\\FilePoolSize" to "40",
-        "Session\\CheckingMemUsageSize" to "16",
+        "Session\\CheckingMemUsageSize" to "8",
+        "Session\\DiskIOReadMode" to "1",
+        "Session\\DiskIOWriteMode" to "1",
+        "Session\\SendBufferWatermark" to "256",
     )
 
     /** 同上，setPreferences JSON 键位（appcontroller.cpp，LT 1.2 生效路径）。 */
     internal val MEMORY_TUNING_JSON = mapOf(
-        "disk_cache" to "64",
+        "disk_cache" to "16",
         "disk_cache_ttl" to "60",
-        "async_io_threads" to "4",
+        "async_io_threads" to "2",
         "file_pool_size" to "40",
-        "checking_memory_use" to "16",
+        "checking_memory_use" to "8",
+        "disk_io_read_mode" to "1",
+        "disk_io_write_mode" to "1",
+        "send_buffer_watermark" to "256",
     )
 
     /** WebUI 启动等待超时（进程拉起 → API 可用的最长时间）。 */

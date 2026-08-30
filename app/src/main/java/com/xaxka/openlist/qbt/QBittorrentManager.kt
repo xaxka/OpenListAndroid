@@ -468,9 +468,10 @@ class QBittorrentManager @Inject constructor(
         } else {
             val passwordNote =
                 if (webUiPassword == QBittorrentSpec.DEFAULT_WEBUI_PASSWORD) "默认 adminadmin" else "自定义密码"
+            val cacheMiB = QBittorrentSpec.MEMORY_TUNING_JSON["disk_cache"] ?: "?"
             log(
                 LoggableLevel.INFO,
-                "凭据、保存路径与内存调优已生效（磁盘缓存上限 64MiB；密码：$passwordNote）",
+                "凭据、保存路径与内存调优已生效（磁盘缓存上限 ${cacheMiB}MiB，100M 宽带深度裁剪；密码：$passwordNote）",
             )
         }
     }

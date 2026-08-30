@@ -43,12 +43,17 @@ class QBittorrentSpecTest {
         assertTrue(conf.contains("WebUI\\Password_PBKDF2=\"@ByteArray("))
         // 默认保存路径写入 Session\DefaultSavePath（公共下载目录）
         assertTrue(conf.contains("Session\\DefaultSavePath=/storage/emulated/0/Download/qbittorrent"))
-        // 内存调优（手机场景：磁盘缓存 64MiB 上限为主力）
-        assertTrue(conf.contains("Session\\DiskCacheSize=64"))
+        // 内存调优（100M 宽带深度裁剪：磁盘缓存 16MiB 上限为主力）
+        assertTrue(conf.contains("Session\\DiskCacheSize=16"))
         assertTrue(conf.contains("Session\\DiskCacheTTL=60"))
-        assertTrue(conf.contains("Session\\AsyncIOThreadsCount=4"))
+        assertTrue(conf.contains("Session\\AsyncIOThreadsCount=2"))
         assertTrue(conf.contains("Session\\FilePoolSize=40"))
-        assertTrue(conf.contains("Session\\CheckingMemUsageSize=16"))
+        assertTrue(conf.contains("Session\\CheckingMemUsageSize=8"))
+        // 磁盘 IO 模式钉住 EnableOSCache=1（缓存交给可回收的内核 page cache）
+        assertTrue(conf.contains("Session\\DiskIOReadMode=1"))
+        assertTrue(conf.contains("Session\\DiskIOWriteMode=1"))
+        // per-peer 发送缓冲上限（qb 默认 500KB → 256KB）
+        assertTrue(conf.contains("Session\\SendBufferWatermark=256"))
         // DHT：显式开启 + 扩展引导路由器（默认 3 个 → 5 个冗余）
         assertTrue(conf.contains("Session\\DHTEnabled=true"))
         assertTrue(conf.contains("Session\\DHTBootstrapNodes=dht.libtorrent.org:25401"))
@@ -122,11 +127,14 @@ class QBittorrentSpecTest {
         // 保存路径下发
         assertTrue(json.contains("\"save_path\":\"/storage/emulated/0/Download/qbittorrent\""))
         // 内存调优（LT 1.2 生效路径；disk_cache 单位 MiB）
-        assertTrue(json.contains("\"disk_cache\":64"))
+        assertTrue(json.contains("\"disk_cache\":16"))
         assertTrue(json.contains("\"disk_cache_ttl\":60"))
-        assertTrue(json.contains("\"async_io_threads\":4"))
+        assertTrue(json.contains("\"async_io_threads\":2"))
         assertTrue(json.contains("\"file_pool_size\":40"))
-        assertTrue(json.contains("\"checking_memory_use\":16"))
+        assertTrue(json.contains("\"checking_memory_use\":8"))
+        assertTrue(json.contains("\"disk_io_read_mode\":1"))
+        assertTrue(json.contains("\"disk_io_write_mode\":1"))
+        assertTrue(json.contains("\"send_buffer_watermark\":256"))
         // DHT 引导节点对齐（不携带 enable_dht 布尔：尊重用户 WebUI 开关）
         assertTrue(json.contains("\"dht_bootstrap_nodes\":\"dht.libtorrent.org:25401"))
         assertTrue(json.contains("router.bittorrent.com:6881"))
@@ -165,7 +173,8 @@ class QBittorrentSpecTest {
             assertTrue(conf.contains("WebUI\\Port=8085"))
             assertTrue(conf.contains("WebUI\\Username=admin"))
             assertTrue(conf.contains("Session\\DefaultSavePath=$save"))
-            assertTrue(conf.contains("Session\\DiskCacheSize=64"))
+            assertTrue(conf.contains("Session\\DiskCacheSize=16"))
+            assertTrue(conf.contains("Session\\SendBufferWatermark=256"))
             assertTrue(conf.contains("Session\\DHTBootstrapNodes="))
         }
     }
@@ -202,9 +211,11 @@ class QBittorrentSpecTest {
         assertTrue(updated.contains("WebUI\\Username=admin"))
         assertTrue(updated.contains("WebUI\\Password_PBKDF2=\"@ByteArray("))
         assertFalse(updated.contains("bas64hash"))
-        // 内存调优对齐（DiskCacheSize -1 → 64）
-        assertTrue(updated.contains("Session\\DiskCacheSize=64"))
-        assertTrue(updated.contains("Session\\AsyncIOThreadsCount=4"))
+        // 内存调优对齐（DiskCacheSize -1 → 16；IO 模式/水位线钉住）
+        assertTrue(updated.contains("Session\\DiskCacheSize=16"))
+        assertTrue(updated.contains("Session\\AsyncIOThreadsCount=2"))
+        assertTrue(updated.contains("Session\\DiskIOReadMode=1"))
+        assertTrue(updated.contains("Session\\SendBufferWatermark=256"))
         // DHT 引导节点对齐；DHTEnabled 保持用户选择（false，不强制覆盖）
         assertTrue(updated.contains("Session\\DHTBootstrapNodes="))
         assertTrue(updated.contains("Session\\DHTEnabled=false"))
@@ -236,7 +247,7 @@ class QBittorrentSpecTest {
     fun `更新无BitTorrent节的配置时创建该节`() {
         val existing = "[Preferences]\nWebUI\\Port=1\n"
         val updated = QBittorrentSpec.updateWebUiConfig(existing, webUiPort = 8085, lanAccess = false)
-        assertTrue(updated.contains("Session\\DiskCacheSize=64"))
+        assertTrue(updated.contains("Session\\DiskCacheSize=16"))
         assertTrue(updated.contains("Session\\DHTBootstrapNodes="))
         assertTrue(updated.contains("WebUI\\Port=8085"))
         assertFalse(updated.contains("WebUI\\Port=1"))
