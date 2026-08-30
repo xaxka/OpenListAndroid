@@ -264,6 +264,7 @@ build_libtorrent() {
     -DBUILD_SHARED_LIBS=OFF \
     -Dstatic_runtime=ON \
     -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_CXX_FLAGS="-Wno-c++11-narrowing-const-reference -Wno-c++11-narrowing" \
     -DCMAKE_PREFIX_PATH="$PREFIX_DIR" \
     -DCMAKE_FIND_ROOT_PATH="$PREFIX_DIR" \
     -DBoost_ROOT="$PREFIX_DIR" \
@@ -290,6 +291,7 @@ build_qbittorrent() {
     -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_CXX_FLAGS="-Wno-c++11-narrowing-const-reference -Wno-c++11-narrowing" \
     -DGUI=OFF -DSTACKTRACE=OFF -DTESTING=OFF \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
