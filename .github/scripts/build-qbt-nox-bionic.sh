@@ -197,17 +197,28 @@ install_qt_host() {
 }
 
 # ---------------------------------------------------------------- Qt（Android 静态）
-# qtbase Android 时区后端补丁：Q_OS_ANDROID 强制 QAndroidTimeZonePrivate（JNI 调
-# java/util/TimeZone.getDefault），而 nox 以子进程运行（无 JVM），任何本地时间
-# 转换（FileLogger 时间戳、QDateTime::fromSecsSinceEpoch 等）都会在
-# QJniEnvironment 挂接 NULL JavaVM 时空指针崩溃（实测 SIGSEGV code=139）。
-# 补丁改为 Android 也走 Unix tzfile 后端（QTzTimeZonePrivate，读 TZ 环境变量/
-# POSIX 规则，如 TZ=UTC），与 Termux qt6-qtbase 的处理同思路：
-#   1. qtimezone.cpp          后端选择去掉 ANDROID 分支（落到 Q_OS_UNIX→QTz）
-#   2. qtimezoneprivate_p.h   QTzTimeZonePrivate 声明不再排除 Android
-#   3. corelib/CMakeLists.txt Android 也编译 qtimezoneprivate_tz.cpp
-# qtimezoneprivate_android.cpp 保留编译但成为死代码（无引用即不进最终链接）。
-patch_qt_tz_backend() {
+# qtbase Android 裸进程补丁：nox 以子进程运行（无 JVM），而 qtbase 的 Android
+# 专属后端直接 JNI 调用 Java API，QJniEnvironment 挂接 NULL JavaVM → 空指针
+# SIGSEGV（真机 code=139，已在 qemu-user + Android 系统镜像下双重复现定位）。
+# 两处地雷（与 Termux qt6-qtbase 无 JVM 补丁同思路，均改为 Unix 实现）：
+#
+# 1. 时区：Q_OS_ANDROID 强制 QAndroidTimeZonePrivate（JNI 调
+#    java/util/TimeZone.getDefault）；任何 systemTimeZone 查询必炸。
+#    补丁：
+#      - qtimezone.cpp          后端选择去掉 ANDROID 分支（落到 Q_OS_UNIX→QTz）
+#      - qtimezoneprivate_p.h   QTzTimeZonePrivate 声明不再排除 Android
+#      - corelib/CMakeLists.txt Android 也编译 qtimezoneprivate_tz.cpp
+#    运行时 TZ=UTC（App 侧注入）→ POSIX 规则→有效 UTC 时区。
+#
+# 2. QStandardPaths：Android 实现全部经 QAndroidApplication::context() JNI；
+#    QCoreApplication 构造期 Android 专属 QLoggingRegistry::initializeRules()
+#    必调 QStandardPaths::locate(GenericConfigLocation, ...)（找 qtlogging.ini）
+#    → 启动第一步即炸（实测崩溃链：main→Application ctor→…→QStandardPaths）。
+#    补丁：corelib/CMakeLists.txt 的 ANDROID 块改编译 qstandardpaths_unix.cpp
+#    （纯 XDG 环境变量/$HOME 实现，无 JNI）。
+#
+# 两个 android 原实现文件仍编译但无引用（静态库成员不进最终链接）。
+patch_qt_bare_process() {
   local src="$1"
   python3 - "$src" <<'PYEOF'
 import sys
@@ -221,11 +232,11 @@ def patch(rel_path, replacements):
     for old, new in replacements:
         count = text.count(old)
         if count == 0:
-            sys.exit(f"qtbase tz patch: pattern not found in {rel_path}: {old!r}")
+            sys.exit(f"qtbase bare-process patch: pattern not found in {rel_path}: {old!r}")
         text = text.replace(old, new)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
-    print(f"qtbase tz patch: {rel_path} OK ({len(replacements)} hunk(s))")
+    print(f"qtbase bare-process patch: {rel_path} OK ({len(replacements)} hunk(s))")
 
 patch("src/corelib/time/qtimezone.cpp", [
     # 两处后端选择（默认时区 + 指定 IANA id）都去掉 Android/JNI 分支
@@ -239,8 +250,11 @@ patch("src/corelib/time/qtimezoneprivate_p.h", [
 ])
 
 patch("src/corelib/CMakeLists.txt", [
+    # 时区：Android 也编译 tzfile 后端
     ("qt_internal_extend_target(Core CONDITION QT_FEATURE_timezone AND UNIX AND NOT ANDROID AND NOT APPLE\n    SOURCES\n        time/qtimezoneprivate_tz.cpp\n",
      "qt_internal_extend_target(Core CONDITION QT_FEATURE_timezone AND UNIX AND NOT APPLE\n    SOURCES\n        time/qtimezoneprivate_tz.cpp\n"),
+    # QStandardPaths：ANDROID 块改用 Unix 实现（XDG 环境变量，无 JNI）
+    ("io/qstandardpaths_android.cpp\n", "io/qstandardpaths_unix.cpp\n"),
 ])
 PYEOF
 }
@@ -256,8 +270,8 @@ build_qt_android() {
     mkdir -p "$src"
     tar -xJf "$DL_DIR/qtbase-$QT_VER.tar.xz" --strip-components=1 -C "$src"
   fi
-  # Android 无 JVM 的裸进程必须避开 JNI 时区后端（见 patch_qt_tz_backend 注释）
-  patch_qt_tz_backend "$src"
+  # Android 无 JVM 的裸进程必须避开 JNI 时区/QStandardPaths 后端（见 patch_qt_bare_process 注释）
+  patch_qt_bare_process "$src"
   # 用 qtbase 自带 configure 包装脚本（与上游 cross_build.sh 同源）：
   # 特性旗标由脚本翻译成正确的 QT_FEATURE_*，避免手写变量出错；
   # -- 之后是透传给 CMake 的参数（NDK 工具链 + Android 三件套）。
