@@ -322,17 +322,18 @@ install_output() {
   mkdir -p "$OUT_DIR/$ABI"
 
   # 捆绑 libc++_shared.so（Qt 强制 c++_shared；App 侧以 LD_LIBRARY_PATH 指向同目录）
+  # 注意 sysroot 库目录名：armeabi-v7a 是 arm-linux-androideabi（无 v7a 前缀）
   local triple
   case "$ABI" in
     arm64-v8a) triple=aarch64-linux-android ;;
-    armeabi-v7a) triple=armv7a-linux-androideabi ;;
+    armeabi-v7a) triple=arm-linux-androideabi ;;
     x86_64) triple=x86_64-linux-android ;;
   esac
   local stl="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$triple/libc++_shared.so"
   if [ ! -f "$stl" ]; then
-    stl="$(find "$NDK" -type f -name libc++_shared.so -path "*$triple*" | head -1)"
+    stl="$(find "$NDK/toolchains/llvm/prebuilt" -type f -name libc++_shared.so | grep "/$triple/" | head -1)"
   fi
-  test -n "$stl" && test -f "$stl" || { echo "ERROR: libc++_shared.so not found in NDK" >&2; exit 1; }
+  test -n "$stl" && test -f "$stl" || { echo "ERROR: libc++_shared.so not found in NDK ($triple)" >&2; exit 1; }
   install -m 644 "$stl" "$OUT_DIR/$ABI/libc++_shared.so"
 
   # strip 缩体积（无调试需求的发行形态）
@@ -369,11 +370,11 @@ install_output() {
     exit 1
   fi
 
-  # 信息项：getaddrinfo 应以动态符号导入（bionic → netd 的 DNS 通路）
-  if "$NDK_HOST_PREBUILT/bin/llvm-readelf" --dyn-syms "$bin" | grep -qw getaddrinfo; then
+  # 信息项：getaddrinfo 应以动态符号导入（bionic → netd 的 DNS 通路；带版本后缀如 @LIBC）
+  if "$NDK_HOST_PREBUILT/bin/llvm-readelf" --dyn-syms "$bin" 2>/dev/null | grep -q "getaddrinfo"; then
     echo "getaddrinfo: 动态导入 ✓（DNS 走 bionic/netd）" >&2
   else
-    echo "WARN: 未发现 getaddrinfo 动态导入（QtNetwork 可能内联封装，请人工确认）" >&2
+    echo "WARN: 未发现 getaddrinfo 动态导入，请人工核查 QtNetwork 的 DNS 路径" >&2
   fi
 
   install -m 755 "$bin" "$out"
