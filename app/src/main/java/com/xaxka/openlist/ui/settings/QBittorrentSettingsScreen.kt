@@ -57,13 +57,13 @@ import kotlinx.coroutines.withContext
 /**
  * 设置子页面：BT 下载（内置 qBittorrent Enhanced nox）。
  *
- * 内置 musl 静态二进制随 APK 打包（jniLibs 改名 libqbittorrent-nox.so），
+ * 内置 bionic 动态链接二进制随 APK 打包（jniLibs 改名 libqbittorrent-nox.so），
  * 随 OpenList 服务启停；WebUI 默认仅监听 127.0.0.1 且 localhost 免鉴权，
  * 由「打开 WebUI」跳系统浏览器管理。可开启「局域网访问」：监听切 0.0.0.0，
  * 其他设备经 http://<本机IP>:<端口> 登录（用户名/密码；本机仍免登录），
  * 开启前强制设置密码，凭据经 localhost 通道下发。
- * musl 静态二进制无法读 Android 的 DNS 配置，tracker/DHT 域名经 App 内置
- * 本机 SOCKS5 代理（随机高位端口，由 Android 系统解析）转发，详见 QBittorrentManager。
+ * 域名解析走系统原生（bionic getaddrinfo→netd，兼容 Private DNS/DNS64），
+ * tracker/DHT/peer 全部直连，详见 QBittorrentManager。
  */
 @Composable
 fun QBittorrentSettingsScreen(
@@ -281,7 +281,7 @@ private fun QbtStatusSection(
                 "监听",
                 if (detail.lanAccess) "0.0.0.0（局域网需登录，本机 localhost 免登录）" else "仅本机（localhost 免鉴权）",
             )
-            if (detail.proxyPort != 0) QbtStatusKV("DNS 代理", "127.0.0.1:${detail.proxyPort}（SOCKS5，tracker 域名经系统解析）")
+            QbtStatusKV("域名解析", "系统原生（bionic netd，兼容 Private DNS / DNS64）")
         }
         if (detail.savePath.isNotBlank()) QbtStatusKV("保存路径", detail.savePath)
         if (detail.detail.isNotBlank()) QbtStatusKV("说明", detail.detail)

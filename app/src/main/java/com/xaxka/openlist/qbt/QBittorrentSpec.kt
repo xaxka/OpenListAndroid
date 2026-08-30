@@ -3,17 +3,18 @@ package com.xaxka.openlist.qbt
 /**
  * qBittorrent Enhanced（qbittorrent-enhanced-nox）固定规格与配置模板。
  *
- * 内置方式：CI 把上游 musl 静态二进制改名 `libqbittorrent-nox.so` 打进 jniLibs
- * （nativeLibraryDir 允许 exec；静态链接无动态依赖），运行期经 ProcessBuilder 以
- * 子进程方式拉起，随 OpenList 服务启停。
+ * 内置方式：CI 交叉编译 bionic 动态链接二进制（NDK r27c + Qt6 静态 + openssl-linked
+ * + libtorrent 1.2，见 .github/scripts/build-qbt-nox-bionic.sh），改名
+ * `libqbittorrent-nox.so` 打进 jniLibs（nativeLibraryDir 允许 exec；动态依赖仅为
+ * bionic 系统库），运行期经 ProcessBuilder 以子进程方式拉起，随 OpenList 服务启停。
  *
  * 上游：c0re100/qBittorrent-Enhanced-Edition release-5.2.3.10
- * （musl static：aarch64 / armv7-musleabihf / x86_64，对应 arm64-v8a / armeabi-v7a / x86_64）。
+ * （arm64-v8a / armeabi-v7a / x86_64，需 Android 7.0/API 24+）。
  *
- * DNS 关键点：musl 静态二进制读 /etc/resolv.conf 解析域名，Android 无该文件且
- * /etc 只读——直连时 tracker/DHT 域名全部解析失败。方案：App 内置本机 SOCKS5 代理
- * （[LocalSocks5Proxy]，随机高位端口；53 为特权端口不可用，故不走自建 DNS 方案），
- * WebUI 生效后经 setPreferences 把代理写入 nox（proxy_type=SOCKS5 + hostname lookup）。
+ * DNS 关键点：bionic 动态链接版 getaddrinfo → netd，原生继承系统 Private DNS
+ * (DoT)/DNS64/VPN DNS；tracker/DHT 引导节点域名直解，DHT(UDP)/peer 全部直连，
+ * 无需任何代理/转发组件（旧 musl 静态版的 LocalSocks5Proxy 方案已废弃）。
+ * [QBittorrentManager] 启动时会清理旧版本残留的代理配置（见 [updateWebUiConfig]）。
  *
  * 访问模式：默认仅本机（127.0.0.1 + localhost 免认证）；可切换局域网模式
  * （0.0.0.0 监听 + 用户名/密码登录，本机仍免认证）。
@@ -53,7 +54,8 @@ object QBittorrentSpec {
      *   Address 按 [lanAccess] 取 0.0.0.0（局域网可访问）或 127.0.0.1（仅本机）；
      * - [BitTorrent] Session\DefaultSavePath：默认保存路径（应用专属外部目录）。
      *
-     * 代理不写入种子：SOCKS5 端口每次启动随机分配，统一走 WebUI setPreferences。
+     * 代理不写入：bionic 版 DNS 走系统原生，App 管理策略为无代理；旧版本残留的
+     * 代理键由 [updateWebUiConfig] 在每次启动前清理。
      * 密码不写入种子：PBKDF2 哈希由 nox 生成，统一走 setPreferences（web_ui_password）。
      */
     fun buildSeedConfig(webUiPort: Int, savePath: String, lanAccess: Boolean = false): String = buildString {
@@ -68,11 +70,13 @@ object QBittorrentSpec {
     }
 
     /**
-     * 既有 qBittorrent.conf 的 WebUI 键值更新（lanAccess/端口/用户名变更时，
-     * 进程已停止的状态下直接改文件；保留 nox 自行持久化的其他键，例如密码哈希）。
-     *
-     * 纯字符串操作：替换 [Preferences] 节内的 Address/Port/Username 行；键不存在则
-     * 追加到该节末尾；节不存在则创建（qb 的 QSettings 兼容键序无关）。
+     * 既有 qBittorrent.conf 的更新（lanAccess/端口/用户名变更时，进程已停止的状态下
+     * 直接改文件；保留 nox 自行持久化的其他键，例如密码哈希）：
+     * - 对齐 [Preferences] 节内的 Address/Port/Username 行；键不存在则追加到该节末尾，
+     *   节不存在则创建（qb 的 QSettings 兼容键序无关）；
+     * - 清理代理键（升级迁移 + 无代理策略）：[Network] Proxy\*（qb 5.2 键位，旧
+     *   SOCKS5 方案残留；不清则 DHT/UDP 流量继续交给已不存在的代理被丢弃）与
+     *   [Preferences] Session\Proxy*（qb ≤5.0 旧键位，顺手清理）。
      */
     fun updateWebUiConfig(content: String, webUiPort: Int, username: String, lanAccess: Boolean): String {
         val address = if (lanAccess) "0.0.0.0" else "127.0.0.1"
@@ -81,7 +85,22 @@ object QBittorrentSpec {
             "WebUI\\Port" to webUiPort.toString(),
             "WebUI\\Username" to escapePath(username).ifEmpty { "openlist" },
         )
-        val lines = content.lines().toMutableList()
+        // 先按节过滤代理键，再做 WebUI 键对齐
+        val stripped = mutableListOf<String>()
+        var section = ""
+        for (raw in content.lines()) {
+            val trimmed = raw.trim()
+            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+                section = trimmed
+                stripped += raw
+                continue
+            }
+            val isProxyKey =
+                (section == "[Network]" && trimmed.startsWith("Proxy\\")) ||
+                    (section == "[Preferences]" && trimmed.startsWith("Session\\Proxy"))
+            if (!isProxyKey) stripped += raw
+        }
+        val lines = stripped.toMutableList()
         val preferencesIdx = lines.indexOfFirst { it.trim() == "[Preferences]" }
 
         fun upsert(sectionEnd: Int) {
@@ -122,21 +141,13 @@ object QBittorrentSpec {
             "\"web_ui_password\":\"${escapeJson(password)}\"}"
 
     /**
-     * setPreferences 的 JSON（localhost 免认证下 POST /api/v2/app/setPreferences）。
+     * 保存路径偏好 JSON（setPreferences POST；每轮启动下发，与旧行为一致）。
      *
-     * 实测注意：proxy_type 必须用字符串枚举 "SOCKS5"（数字 2 不生效，
-     * qb 5.2 的 appcontroller 按枚举字符串解析）。
-     * proxy_peer_connections=false：peer 多为裸 IP 直连（musl 直连 socket 本就可用），
-     * 代理只承担 tracker/DHT/RSS 等域名解析流量，减小转发开销。
+     * 不再携带代理字段：bionic 版 DNS 走系统原生，代理相关的历史残留统一由
+     * [updateWebUiConfig] 在启动前清理（App 管理策略为无代理）。
      */
-    fun buildPreferencesJson(proxyPort: Int, savePath: String): String =
-        "{\"proxy_type\":\"SOCKS5\"," +
-            "\"proxy_ip\":\"127.0.0.1\"," +
-            "\"proxy_port\":$proxyPort," +
-            "\"proxy_auth_enabled\":false," +
-            "\"proxy_peer_connections\":false," +
-            "\"proxy_hostname_lookup\":true," +
-            "\"save_path\":\"${escapeJson(savePath)}\"}"
+    fun buildSavePathPreferencesJson(savePath: String): String =
+        "{\"save_path\":\"${escapeJson(savePath)}\"}"
 
     /** INI 路径值转义：反斜杠不转（Linux 风格路径），仅去换行保证单行。 */
     internal fun escapePath(value: String): String =

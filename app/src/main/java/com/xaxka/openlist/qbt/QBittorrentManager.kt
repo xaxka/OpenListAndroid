@@ -1,6 +1,7 @@
 package com.xaxka.openlist.qbt
 
 import android.content.Context
+import android.os.Build
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.log.QBittorrentEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
@@ -30,14 +31,15 @@ import kotlinx.coroutines.withContext
 /**
  * qBittorrent Enhanced（nox）进程管理（BT 下载扩展功能）。
  *
- * 内置二进制为上游 musl 静态构建（见 [QBittorrentSpec]），随 OpenList 服务启停：
+ * 内置二进制为 bionic 动态链接构建（见 [QBittorrentSpec]），随 OpenList 服务启停：
  * 生命周期由 [com.xaxka.openlist.service.ServerManager] 驱动（RUNNING 时按偏好拉起，
  * 停止流程即回收），与 EasyTier 内网映射同一模式。
  *
- * 启动流程：种子配置（WebUI 仅回环 + 免认证）→ 拉起子进程（--profile 独立目录，
- * TMPDIR 指向应用缓存，静 musl 无 /tmp）→ 轮询 WebUI 就绪 → setPreferences 写入
- * 本机 SOCKS5 代理（域名解析走 Android 系统，解决 musl 无 resolv.conf 的 DNS 问题）
- * → 进入运行态周期巡检（进程存活 + WebUI 版本）。
+ * 启动流程：配置准备（WebUI 仅回环 + 免认证；顺带清理旧版残留代理键）→ 拉起子进程
+ * （--profile 独立目录，TMPDIR/HOME 指向应用目录）→ 轮询 WebUI 就绪 →
+ * setPreferences 下发保存路径（域名解析由 bionic getaddrinfo→netd 原生完成，
+ * DHT(UDP)/peer/tracker 全部直连，无需代理组件）→ 进入运行态周期巡检
+ * （进程存活 + WebUI 版本）。
  *
  * 自愈：进程意外退出（OOM/厂商冻结后杀）时自动重启，连续快速失败 3 次转 ERROR
  * 不再自动重试（避免风暴），回前台时 ensureRecovered 兜底再试。
@@ -55,7 +57,6 @@ class QBittorrentManager @Inject constructor(
         val detail: String = "",
         val version: String = "",
         val webUiPort: Int = QBittorrentSpec.DEFAULT_WEBUI_PORT,
-        val proxyPort: Int = 0,
         val savePath: String = "",
         /** 局域网访问（0.0.0.0 监听 + 登录；本机仍免认证）。 */
         val lanAccess: Boolean = false,
@@ -94,9 +95,6 @@ class QBittorrentManager @Inject constructor(
 
     @Volatile
     private var process: Process? = null
-
-    @Volatile
-    private var proxy: LocalSocks5Proxy? = null
 
     @Volatile
     private var instanceStarted = false
@@ -164,6 +162,13 @@ class QBittorrentManager @Inject constructor(
         if (!enabled) return
         if (instanceStarted && process?.isAlive == true) return
 
+        // bionic 动态链接二进制需 API 24+（Qt 6.8 最低支持版本）
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            log(LoggableLevel.WARN, "内置 qbittorrent-enhanced-nox 为 bionic 构建，需 Android 7.0+（当前 API ${Build.VERSION.SDK_INT}）")
+            transition(Status(Phase.UNAVAILABLE, detail = "需 Android 7.0+"))
+            return
+        }
+
         val binary = binaryFile
         if (binary == null) {
             log(LoggableLevel.WARN, "未找到内置 qbittorrent-enhanced-nox（当前构建未打包）")
@@ -186,24 +191,13 @@ class QBittorrentManager @Inject constructor(
         runCatching { ensureConfig(profileDir, port, username, lanAccess) }
             .onFailure { log(LoggableLevel.WARN, "写入/更新配置失败：${it.message}") }
 
-        // 本机 SOCKS5（域名解析走 Android 系统 DNS）
-        val socks = proxy ?: LocalSocks5Proxy().also { proxy = it }
-        val proxyPort = try {
-            socks.start()
-        } catch (e: Exception) {
-            log(LoggableLevel.WARN, "本机 SOCKS5 启动失败（域名解析将不可用）：${e.message}")
-            socks.stop()
-            proxy = null
-            0
-        }
-
         transition(
-            Status(Phase.STARTING, webUiPort = port, proxyPort = proxyPort, savePath = saveDir.absolutePath, lanAccess = lanAccess)
+            Status(Phase.STARTING, webUiPort = port, savePath = saveDir.absolutePath, lanAccess = lanAccess)
         )
         log(
             LoggableLevel.INFO,
             "启动 qbittorrent-enhanced-nox v${QBittorrentSpec.EMBEDDED_VERSION}（WebUI 端口 $port，" +
-                "监听 ${if (lanAccess) "0.0.0.0（局域网需登录）" else "127.0.0.1（仅本机）"}，代理端口 $proxyPort）",
+                "监听 ${if (lanAccess) "0.0.0.0（局域网需登录）" else "127.0.0.1（仅本机）"}，DNS 走系统原生）",
         )
 
         val proc = try {
@@ -217,7 +211,7 @@ class QBittorrentManager @Inject constructor(
                 ).apply {
                     redirectErrorStream(true)
                     environment().apply {
-                        // musl/Qt 默认找 /tmp（Android 不存在）与 $HOME，全部指到应用目录
+                        // Qt 默认找 /tmp（Android 不存在）与 $HOME，全部指到应用目录
                         put("TMPDIR", cacheDir.absolutePath)
                         put("TEMP", cacheDir.absolutePath)
                         put("TMP", cacheDir.absolutePath)
@@ -253,16 +247,16 @@ class QBittorrentManager @Inject constructor(
             log(LoggableLevel.WARN, "WebUI 就绪超时（$WEBUI_READY_TIMEOUT_MS ms），转入巡检重试")
             transition(
                 Status(Phase.RUNNING, detail = "WebUI 未就绪", webUiPort = port,
-                    proxyPort = proxyPort, savePath = saveDir.absolutePath, lanAccess = lanAccess)
+                    savePath = saveDir.absolutePath, lanAccess = lanAccess)
             )
         } else {
             transition(
                 Status(Phase.RUNNING, version = ready, webUiPort = port,
-                    proxyPort = proxyPort, savePath = saveDir.absolutePath, lanAccess = lanAccess)
+                    savePath = saveDir.absolutePath, lanAccess = lanAccess)
             )
             log(LoggableLevel.INFO, "WebUI 已就绪（$ready）")
-            // 生效代理与保存路径（每轮启动都下发：代理端口为临时分配）
-            applyPreferences(port, proxyPort, saveDir.absolutePath)
+            // 生效保存路径（每轮启动都下发，与旧行为一致）
+            applySavePathPreferences(port, saveDir.absolutePath)
             // 局域网模式：下发登录用户名/密码（qb 侧 PBKDF2 哈希持久化；每轮重下发幂等）
             if (lanAccess && password.isNotEmpty()) {
                 applyAuth(port, username, password)
@@ -287,8 +281,6 @@ class QBittorrentManager @Inject constructor(
             log(LoggableLevel.INFO, "nox 进程已退出（code=${runCatching { proc.exitValue() }.getOrDefault(-1)}）")
         }
         process = null
-        proxy?.let { runCatching { it.stop() } }
-        proxy = null
         transition(Status(Phase.STOPPED))
         log(LoggableLevel.INFO, "BT 下载已停止")
     }
@@ -360,10 +352,9 @@ class QBittorrentManager @Inject constructor(
         return null
     }
 
-    /** 代理与保存路径经 WebUI API 下发（localhost 免认证；失败不影响运行态）。 */
-    private suspend fun applyPreferences(port: Int, proxyPort: Int, savePath: String) {
-        if (proxyPort == 0) return
-        val json = QBittorrentSpec.buildPreferencesJson(proxyPort, savePath)
+    /** 保存路径经 WebUI API 下发（localhost 免认证；失败不影响运行态）。 */
+    private suspend fun applySavePathPreferences(port: Int, savePath: String) {
+        val json = QBittorrentSpec.buildSavePathPreferencesJson(savePath)
         val ok = withContext(Dispatchers.IO) {
             httpPostForm(
                 "http://127.0.0.1:$port/api/v2/app/setPreferences",
@@ -371,9 +362,9 @@ class QBittorrentManager @Inject constructor(
             )
         }
         if (!ok) {
-            log(LoggableLevel.WARN, "下发代理/保存路径偏好失败（域名解析可能不可用）")
+            log(LoggableLevel.WARN, "下发保存路径偏好失败（nox 将沿用配置文件内的路径）")
         } else {
-            log(LoggableLevel.INFO, "本机 SOCKS5 代理与保存路径已生效")
+            log(LoggableLevel.INFO, "保存路径已生效")
         }
     }
 

@@ -10,7 +10,7 @@ import org.junit.Test
  * 对照 qbittorrent-enhanced-nox 5.2.3.10 实测（profile/qBittorrent/config/qBittorrent.conf）：
  * - [Preferences] WebUI\Address/Port/LocalHostAuth/Username
  * - [BitTorrent] Session\DefaultSavePath
- * - setPreferences 接受 proxy_type 为字符串枚举 "SOCKS5"（数字 2 不生效）
+ * - 旧代理键（[Network] Proxy\*、[Preferences] Session\Proxy*）由 updateWebUiConfig 清理
  */
 class QBittorrentSpecTest {
 
@@ -39,23 +39,16 @@ class QBittorrentSpecTest {
     }
 
     @Test
-    fun `偏好JSON使用SOCKS5字符串枚举并携带域名解析`() {
-        val json = QBittorrentSpec.buildPreferencesJson(39001, "/sdcard0/dl")
-        // proxy_type 必须是字符串 "SOCKS5"（数字 2 在 5.2.3.10 不生效，实测）
-        assertTrue(json.contains("\"proxy_type\":\"SOCKS5\""))
-        assertTrue(json.contains("\"proxy_ip\":\"127.0.0.1\""))
-        assertTrue(json.contains("\"proxy_port\":39001"))
-        // 域名解析经代理（musl 无 resolv.conf，直连 DNS 必挂）
-        assertTrue(json.contains("\"proxy_hostname_lookup\":true"))
-        // peer 裸 IP 不走代理（降低转发开销）
-        assertTrue(json.contains("\"proxy_peer_connections\":false"))
-        assertTrue(json.contains("\"proxy_auth_enabled\":false"))
+    fun `偏好JSON仅含保存路径不携带代理字段`() {
+        val json = QBittorrentSpec.buildSavePathPreferencesJson("/sdcard0/dl")
+        // bionic 版 DNS 走系统原生，App 管理策略为无代理：不再下发任何代理字段
         assertTrue(json.contains("\"save_path\":\"/sdcard0/dl\""))
+        assertFalse(json.contains("proxy"))
     }
 
     @Test
     fun `JSON转义处理反斜杠与引号`() {
-        val json = QBittorrentSpec.buildPreferencesJson(1, "a\"b\\c")
+        val json = QBittorrentSpec.buildSavePathPreferencesJson("a\"b\\c")
         assertTrue(json.contains("a\\\"b\\\\c"))
         assertFalse(json.contains("a\"b"))
     }
@@ -88,9 +81,14 @@ class QBittorrentSpecTest {
             WebUI\LocalHostAuth=false
             WebUI\Username=openlist
             WebUI\Password_PBKDF2="@ByteArray(bas64hash)"
+            Session\ProxyType=SOCKS5
 
             [Network]
             Proxy\Type=SOCKS5
+            Proxy\IP=127.0.0.1
+            Proxy\Port=39001
+            Proxy\Profiles\BitTorrent=true
+            Cookie\Name=keep
         """.trimIndent()
         val updated = QBittorrentSpec.updateWebUiConfig(existing, webUiPort = 9090, username = "xaxka", lanAccess = true)
 
@@ -98,10 +96,16 @@ class QBittorrentSpecTest {
         assertTrue(updated.contains("WebUI\\Address=0.0.0.0"))
         assertTrue(updated.contains("WebUI\\Port=9090"))
         assertTrue(updated.contains("WebUI\\Username=xaxka"))
-        // 其他节与键原样保留（含 nox 持久化的密码哈希与代理设置）
+        // 其他节与键原样保留（含 nox 持久化的密码哈希与无关键）
         assertTrue(updated.contains("Session\\Port=55599"))
         assertTrue(updated.contains("WebUI\\Password_PBKDF2=\"@ByteArray(bas64hash)\""))
-        assertTrue(updated.contains("Proxy\\Type=SOCKS5"))
+        assertTrue(updated.contains("Cookie\\Name=keep"))
+        // 代理键全部清理（升级迁移：旧 SOCKS5 方案残留，不清则 DHT/UDP 流量继续被丢弃）
+        assertFalse(updated.contains("Proxy\\Type"))
+        assertFalse(updated.contains("Proxy\\IP"))
+        assertFalse(updated.contains("39001"))
+        assertFalse(updated.contains("Proxy\\Profiles"))
+        assertFalse(updated.contains("Session\\ProxyType"))
         assertFalse(updated.contains("WebUI\\Port=18085"))
         assertFalse(updated.contains("WebUI\\Address=127.0.0.1"))
     }

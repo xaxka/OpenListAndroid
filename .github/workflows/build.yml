@@ -114,10 +114,124 @@ jobs:
           path: jni-out
           if-no-files-found: error
 
+  # qBittorrent Enhanced nox（bionic 动态链接版，BT 下载扩展功能）：
+  # 上游 musl 静态二进制在 Android 域名解析全灭（musl resolver 硬编码 /etc/resolv.conf，
+  # 缺失回退 127.0.0.1:53 无监听），DHT 经无 UDP ASSOCIATE 的本机 SOCKS5 也被丢包。
+  # 改为 NDK r27c 交叉编译 bionic 动态链接（Qt6 静态 + openssl-linked + libtorrent 1.2
+  # + Boost 头文件 + zlib-ng，对齐上游 cross_build.sh 配方）：getaddrinfo→netd（继承
+  # Private DNS/DNS64），DHT(UDP)/peer/tracker 全直连，App 侧 LocalSocks5Proxy 方案废弃。
+  # 产物为 PIE 可执行文件，动态依赖仅为 bionic 系统库；改名 libqbittorrent-nox.so 经
+  # jniLibs 打包（useLegacyPackaging 解压到 nativeLibraryDir 后可 exec）。
+  # 版本须与 app QBittorrentSpec.EMBEDDED_VERSION 一致（当前 5.2.3.10）。
+  qbt-nox:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ABI: arm64-v8a
+            OPENSSL_TARGET: android-arm64
+          - ABI: armeabi-v7a
+            OPENSSL_TARGET: android-arm
+          - ABI: x86_64
+            OPENSSL_TARGET: android-x86_64
+    env:
+      QT_VER: 6.8.3
+      OPENSSL_VER: 3.5.1
+      BOOST_VER: 1.86.0
+      ZLIB_NG_VER: 2.3.3
+      # qBittorrent-Enhanced-Edition release-5.2.3.10（固定 commit）
+      QBT_REF: 44ee266a575600d04788623b6939e47443d27ed1
+      # libtorrent RC_1_2（上游 cross_build.sh 配方，固定 commit）
+      LT_REF: c5ff6c3186a92ddec01f6f0a8146aaedb4a1c3f9
+      ANDROID_PLATFORM: android-24
+      NDK_CCACHE: ccache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: OpenListAndroid
+
+      - name: Setup Android NDK (r27c)
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      # 成品内容寻址缓存：全部版本 ref 未变直接复用，跳过整条编译链
+      - name: Cache qbt-nox output
+        id: qbt-out-cache
+        uses: actions/cache@v4
+        with:
+          path: qbt-out
+          key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-v1
+
+      # 依赖前缀缓存：Qt/OpenSSL/zlib-ng/Boost 安装产物按版本复用（阶段幂等，可断点续跑）
+      - name: Restore dependency prefix
+        if: steps.qbt-out-cache.outputs.cache-hit != 'true'
+        id: qbt-prefix-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: qbt-prefix
+          key: qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen1
+
+      # ccache：跨 run 复用编译对象（key 含 run_id 保证每次保存新状态，restore 部分命中）
+      - name: Restore ccache
+        if: steps.qbt-out-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ccache
+          key: qbt-ccache-${{ matrix.ABI }}-v1-${{ github.run_id }}
+          restore-keys: |
+            qbt-ccache-${{ matrix.ABI }}-v1-
+
+      - name: Build qbittorrent-enhanced-nox (bionic)
+        if: steps.qbt-out-cache.outputs.cache-hit != 'true'
+        run: |
+          ccache --zero-stats 2>/dev/null || true
+          bash OpenListAndroid/.github/scripts/build-qbt-nox-bionic.sh \
+            "${{ matrix.ABI }}" "${{ matrix.OPENSSL_TARGET }}" \
+            "$GITHUB_WORKSPACE/qbt-out" "$GITHUB_WORKSPACE/qbt-prefix"
+          ccache --show-stats 2>/dev/null || true
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          ANDROID_HOME: /usr/local/lib/android/sdk
+
+      - name: Save dependency prefix
+        if: always() && steps.qbt-out-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: qbt-prefix
+          key: qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen1
+
+      - name: Save ccache
+        if: always() && steps.qbt-out-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: qbt-ccache-${{ matrix.ABI }}-v1-${{ github.run_id }}
+
+      - name: Verify output
+        run: |
+          set -eu
+          so="qbt-out/${{ matrix.ABI }}/libqbittorrent-nox.so"
+          test -s "$so" || { echo "ERROR: missing $so"; exit 1; }
+          ls -lh "$so"
+
+      - name: Upload qbt-nox libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: qbt-nox-bionic-${{ matrix.ABI }}
+          path: qbt-out
+          if-no-files-found: error
+
   # Beta 编译（对齐源项目 tmp/.github/workflows/build.yaml：OpenList beta 内核 + 签名 + 分 ABI APK）
   beta:
     if: github.event_name != 'pull_request'
-    needs: [easytier-jni]
+    needs: [easytier-jni, qbt-nox]
     runs-on: ubuntu-latest
     # 发布 dev Release 需要写权限（softprops/action-gh-release 用 GITHUB_TOKEN 创建 tag/release）
     permissions:
@@ -229,49 +343,31 @@ jobs:
               || { echo "ERROR: missing libeasytier_android_jni.so for $abi"; exit 1; }
           done
 
-      # qBittorrent Enhanced nox（musl 静态二进制，BT 下载扩展功能）：
-      # 上游 release 的 zip 解压出 qbittorrent-nox，改名 libqbittorrent-nox.so 注入
-      # jniLibs（AGP 仅打包 lib 前缀；useLegacyPackaging 解压到 nativeLibraryDir 后可 exec）。
-      # 版本须与 app QBittorrentSpec.EMBEDDED_VERSION 一致（当前 5.2.3.10）。
-      - name: qBittorrent nox cache
-        id: qbt-cache
-        uses: actions/cache@v4
+      # qBittorrent Enhanced nox（bionic 动态链接版）注入 jniLibs：
+      # merge-multiple 合并三个 artifact 的 <abi>/ 目录到 app/src/main/jniLibs。
+      - name: Download qBittorrent nox (bionic)
+        uses: actions/download-artifact@v4
         with:
-          path: qbt-nox-libs
-          key: qbt-nox-v5.2.3.10-all-abi
+          pattern: qbt-nox-bionic-*
+          path: app/src/main/jniLibs
+          merge-multiple: true
 
-      - name: Download qBittorrent Enhanced nox
-        if: steps.qbt-cache.outputs.cache-hit != 'true'
+      # 动态链接契约校验：只允许依赖 bionic 系统库（libc/libm/libdl/liblog/libandroid）；
+      # 出现 Qt/OpenSSL/libc++_shared 等即说明静态链接不完整，打进 APK 必然无法 exec。
+      - name: Verify qBittorrent nox libs
         run: |
           set -eu
-          BASE="https://github.com/c0re100/qBittorrent-Enhanced-Edition/releases/download/release-5.2.3.10"
-          declare -A MAP=(
-            [arm64-v8a]=qbittorrent-enhanced-nox_aarch64-linux-musl_static
-            [armeabi-v7a]=qbittorrent-enhanced-nox_armv7-linux-musleabihf_static
-            [x86_64]=qbittorrent-enhanced-nox_x86_64-linux-musl_static
-          )
+          ls -laR app/src/main/jniLibs
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            name="${MAP[$abi]}"
-            echo "== $name -> $abi"
-            curl -fSL --retry 5 --retry-delay 3 -o /tmp/qbt.zip "$BASE/$name.zip"
-            rm -rf /tmp/qbt-out && mkdir -p /tmp/qbt-out
-            unzip -o -q /tmp/qbt.zip -d /tmp/qbt-out
-            bin=$(find /tmp/qbt-out -type f -name 'qbittorrent*' | head -1)
-            test -n "$bin" || { echo "ERROR: no binary in $name.zip"; exit 1; }
-            file "$bin"
-            mkdir -p "qbt-nox-libs/$abi"
-            install -m 755 "$bin" "qbt-nox-libs/$abi/libqbittorrent-nox.so"
-          done
-
-      - name: Inject qBittorrent nox into jniLibs
-        run: |
-          set -eu
-          for abi in arm64-v8a armeabi-v7a x86_64; do
-            mkdir -p "app/src/main/jniLibs/$abi"
-            install -m 755 "qbt-nox-libs/$abi/libqbittorrent-nox.so" "app/src/main/jniLibs/$abi/libqbittorrent-nox.so"
-            test -s "app/src/main/jniLibs/$abi/libqbittorrent-nox.so" \
-              || { echo "ERROR: missing libqbittorrent-nox.so for $abi"; exit 1; }
-            ls -la "app/src/main/jniLibs/$abi/libqbittorrent-nox.so"
+            so="app/src/main/jniLibs/$abi/libqbittorrent-nox.so"
+            test -s "$so" || { echo "ERROR: missing libqbittorrent-nox.so for $abi"; exit 1; }
+            needed=$(readelf -d "$so" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' | tr '\n' ' ')
+            echo "$abi NEEDED: $needed"
+            bad=$(echo "$needed" | tr ' ' '\n' | grep -Ev '^(libc\.so|libm\.so|libdl\.so|liblog\.so|libandroid\.so)$' | grep -v '^$' || true)
+            if [ -n "$bad" ]; then
+              echo "ERROR: unexpected NEEDED in $abi: $bad"
+              exit 1
+            fi
           done
 
       # 与源项目同名 Secrets 键；gradle 侧由 app/build.gradle.kts 读取 local.properties
