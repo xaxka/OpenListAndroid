@@ -286,6 +286,24 @@ patch("src/corelib/kernel/qjniobject.cpp", [
     ("    ~QJniObjectPrivate() {\n        JNIEnv *env = QJniEnvironment::getJniEnv();\n        if (m_jobject)\n            env->DeleteGlobalRef(m_jobject);\n        if (m_jclass && m_own_jclass)\n            env->DeleteGlobalRef(m_jclass);\n    }\n",
      "    ~QJniObjectPrivate() {\n        if (!m_jobject && !(m_jclass && m_own_jclass))\n            return; // nothing to release; avoids JNI (bare exec has no JVM)\n        JNIEnv *env = QJniEnvironment::getJniEnv();\n        if (!env)\n            return;\n        if (m_jobject)\n            env->DeleteGlobalRef(m_jobject);\n        if (m_jclass && m_own_jclass)\n            env->DeleteGlobalRef(m_jclass);\n    }\n"),
 ])
+
+patch("src/plugins/tls/openssl/qtlsbackend_openssl.cpp", [
+    # systemCaCertificates()：Android 分支经 JNI 调 QtNative.getSSLCertificates
+    # （qsslsocket_openssl_android.cpp fetchSslCertificateData），Session 初始化
+    # 即触发（qemu 实测第 4 崩点）。删除该分支落到 Q_OS_UNIX：扫 Unix 证书目录
+    # （Android 上为空列表，与旧 musl 静态版行为一致，无 JNI）
+    ("#elif defined(Q_OS_ANDROID)\n    const QList<QByteArray> certData = fetchSslCertificateData();\n    for (auto certDatum : certData)\n        systemCerts.append(QSslCertificate::fromData(certDatum, QSsl::Der));\n",
+     ""),
+])
+
+patch("src/network/kernel/qnetworkproxy_android.cpp", [
+    # QNetworkProxyFactory::systemProxyForQuery()：Android 实现经 JNI 注册/
+    # 查询系统代理（ProxyInfoObject ctor callStaticMethod registerReceiver）；
+    # QNetworkAccessManager 首个请求（favicon/RSS/GeoIP 下载）必触发。裸进程
+    # 无 JVM → 直接报告无代理（NoProxy = 直连，与本应用无代理策略一致）
+    ("    QList<QNetworkProxy> proxyList;\n    if (!proxyInfoInstance)\n        return proxyList;\n",
+     "    QList<QNetworkProxy> proxyList;\n    // bare exec (no JVM): Android system proxy requires JNI; report no proxy\n    return {QNetworkProxy::NoProxy};\n    if (!proxyInfoInstance)\n        return proxyList;\n"),
+])
 PYEOF
 }
 
