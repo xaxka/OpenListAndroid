@@ -345,13 +345,19 @@ install_output() {
   echo "---- NEEDED ----"
   "$NDK_HOST_PREBUILT/bin/llvm-readelf" -d "$bin" | grep NEEDED >&2 || echo '(no NEEDED)' >&2
 
-  # 契约校验 1：必须是 PIE（ET_DYN，可经 jniLibs 打包 + nativeLibraryDir exec）
+  # 契约校验 1：e_type=DYN（jniLibs 打包要求）+ 含 PT_INTERP 段（证明是可执行文件；
+  # PIE 与共享库的 e_type 同为 DYN，readelf 无法区分，须以 INTERP 段判别）
   local etype
-  etype="$("$NDK_HOST_PREBUILT/bin/llvm-readelf" -h "$bin" | sed -n 's/.*Type:.*(\(.*\))/\1/p')"
-  if [ "$etype" != "DYN (Position-Independent Executable file)" ] && [ "$etype" != "DYN" ]; then
-    echo "ERROR: 期望 PIE(ET_DYN)，实际: $etype" >&2
+  etype="$("$NDK_HOST_PREBUILT/bin/llvm-readelf" -h "$bin" | awk '/Type:/{print $2}')"
+  if [ "$etype" != "DYN" ]; then
+    echo "ERROR: 期望 e_type=DYN，实际: $etype" >&2
     exit 1
   fi
+  if ! "$NDK_HOST_PREBUILT/bin/llvm-readelf" -l "$bin" | grep -q INTERP; then
+    echo "ERROR: 无 PT_INTERP 段（是共享库而非可执行文件，无法 exec）" >&2
+    exit 1
+  fi
+  "$NDK_HOST_PREBUILT/bin/llvm-readelf" -l "$bin" | grep -A1 INTERP >&2 || true
 
   # 契约校验 2：动态依赖只能是 bionic 系统库 + libc++_shared.so（出现 Qt/ssl 等即失败）
   local bad=""
