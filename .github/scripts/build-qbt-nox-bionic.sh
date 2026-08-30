@@ -233,6 +233,7 @@ build_qt_android() {
       -DANDROID_PLATFORM="$ANDROID_PLATFORM" \
       -DANDROID_STL=c++_shared \
       -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
+      -DCMAKE_FIND_ROOT_PATH="$PREFIX_DIR" \
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
       -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
       -DCMAKE_PREFIX_PATH="$PREFIX_DIR" \
@@ -256,11 +257,17 @@ build_libtorrent() {
     git -C "$src" log -1 --oneline >&2 || true
   fi
   rm -rf "$WORK_DIR/libtorrent"
+  # NDK 工具链把 FIND_ROOT_PATH_MODE_* 设为 ONLY（find 仅在 NDK 内搜索），
+  # 必须把依赖 prefix 追加进 CMAKE_FIND_ROOT_PATH（工具链会 APPEND NDK），
+  # 否则 CMAKE_PREFIX_PATH 被重根、FindBoost 等模块模式搜索全部落空。
   cmake -S "$src" -B "$WORK_DIR/libtorrent" "${cmake_common[@]}" \
     -DBUILD_SHARED_LIBS=OFF \
     -Dstatic_runtime=ON \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_PREFIX_PATH="$PREFIX_DIR" \
+    -DCMAKE_FIND_ROOT_PATH="$PREFIX_DIR" \
+    -DBoost_ROOT="$PREFIX_DIR" \
+    -DBoost_NO_SYSTEM_PATHS=ON \
     -Dbuild_tests=OFF -Dbuild_examples=OFF -Dbuild_tools=OFF -Dpython-bindings=OFF
   cmake --build "$WORK_DIR/libtorrent" --parallel "$JOBS"
   cmake --install "$WORK_DIR/libtorrent"
@@ -293,6 +300,10 @@ build_qbittorrent() {
     -DCMAKE_INSTALL_PREFIX="$PREFIX_DIR" \
     -DQT_HOST_PATH="$HOST_QT" \
     -DCMAKE_PREFIX_PATH="$PREFIX_DIR;$QT_PREFIX" \
+    -DCMAKE_FIND_ROOT_PATH="$PREFIX_DIR;$QT_PREFIX" \
+    -DBoost_ROOT="$PREFIX_DIR" \
+    -DBoost_NO_SYSTEM_PATHS=ON \
+    -DZLIB_ROOT="$PREFIX_DIR" \
     -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
     -DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
     "${NDK_CCACHE_ARGS[@]}"
