@@ -213,9 +213,19 @@ install_qt_host() {
 # 2. QStandardPaths：Android 实现全部经 QAndroidApplication::context() JNI；
 #    QCoreApplication 构造期 Android 专属 QLoggingRegistry::initializeRules()
 #    必调 QStandardPaths::locate(GenericConfigLocation, ...)（找 qtlogging.ini）
-#    → 启动第一步即炸（实测崩溃链：main→Application ctor→…→QStandardPaths）。
-#    补丁：corelib/CMakeLists.txt 的 ANDROID 块改编译 qstandardpaths_unix.cpp
-#    （纯 XDG 环境变量/$HOME 实现，无 JNI）。
+#    → 启动即炸。补丁：corelib/CMakeLists.txt 的 ANDROID 块改编译
+#    qstandardpaths_unix.cpp（纯 XDG 环境变量/$HOME 实现，无 JNI）。
+#
+# 3. QJniObject/QJniEnvironment 空引用守卫（首炸点，三轮同源）：
+#    QCoreApplicationPrivate::init() → appVersion()（Android 路径）构造临时
+#    QJniObject 包裹 NULL context → 作用域结束析构时 ~QJniObjectPrivate()
+#    无条件调 getJniEnv()，而 getJniEnv() 不检查 javaVM() 空指针 →
+#    `vm->GetEnv()` 空指针解引用（实测 crash PC 即此处，JNI_VERSION_1_6）。
+#    补丁：
+#      - qjnienvironment.cpp getJniEnv()：javaVM() 为空直接返回 nullptr；
+#        TLS 析构 DetachCurrentThread 同样加空守卫
+#      - qjniobject.cpp ~QJniObjectPrivate()：无全局引用可释放时早退，
+#        不再触碰 JNI
 #
 # 两个 android 原实现文件仍编译但无引用（静态库成员不进最终链接）。
 patch_qt_bare_process() {
@@ -255,6 +265,26 @@ patch("src/corelib/CMakeLists.txt", [
      "qt_internal_extend_target(Core CONDITION QT_FEATURE_timezone AND UNIX AND NOT APPLE\n    SOURCES\n        time/qtimezoneprivate_tz.cpp\n"),
     # QStandardPaths：ANDROID 块改用 Unix 实现（XDG 环境变量，无 JNI）
     ("io/qstandardpaths_android.cpp\n", "io/qstandardpaths_unix.cpp\n"),
+])
+
+patch("src/corelib/kernel/qjnienvironment.cpp", [
+    # getJniEnv()：无 JVM（裸 exec）时 javaVM() 为 NULL，直接解引用 vm->GetEnv 必炸；
+    # 返回 nullptr，由调用方按需判空（无 JVM 时不存在有效的 jobject/jclass，
+    # 合法调用路径不会走到 env 解引用）
+    ("    JavaVM *vm = QtAndroidPrivate::javaVM();\n    const jint ret = vm->GetEnv((void**)&jniEnv, JNI_VERSION_1_6);\n",
+     "    JavaVM *vm = QtAndroidPrivate::javaVM();\n    if (!vm)\n        return nullptr; // bare exec (no JVM): JNI unavailable\n    const jint ret = vm->GetEnv((void**)&jniEnv, JNI_VERSION_1_6);\n"),
+    # TLS 析构的 DetachCurrentThread 同样可能拿到 NULL vm（未 attach 过时不会
+    # 到这，但守卫无害）
+    ("        QtAndroidPrivate::javaVM()->DetachCurrentThread();\n",
+     "        if (JavaVM *vm = QtAndroidPrivate::javaVM())\n            vm->DetachCurrentThread();\n"),
+])
+
+patch("src/corelib/kernel/qjniobject.cpp", [
+    # ~QJniObjectPrivate()：原实现无条件 getJniEnv()（在判空之前）——
+    # 包裹 NULL 对象的临时 QJniObject（如 QCoreApplication::appVersion() 的
+    # context）析构即炸；无全局引用可释放时早退，不触碰 JNI
+    ("    ~QJniObjectPrivate() {\n        JNIEnv *env = QJniEnvironment::getJniEnv();\n        if (m_jobject)\n            env->DeleteGlobalRef(m_jobject);\n        if (m_jclass && m_own_jclass)\n            env->DeleteGlobalRef(m_jclass);\n    }\n",
+     "    ~QJniObjectPrivate() {\n        if (!m_jobject && !(m_jclass && m_own_jclass))\n            return; // nothing to release; avoids JNI (bare exec has no JVM)\n        JNIEnv *env = QJniEnvironment::getJniEnv();\n        if (!env)\n            return;\n        if (m_jobject)\n            env->DeleteGlobalRef(m_jobject);\n        if (m_jclass && m_own_jclass)\n            env->DeleteGlobalRef(m_jclass);\n    }\n"),
 ])
 PYEOF
 }

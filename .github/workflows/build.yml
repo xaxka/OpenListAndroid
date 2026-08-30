@@ -159,7 +159,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: qbt-out
-          key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-bare-v3
+          key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-bare-v4
 
       - name: Setup Android NDK (r27c)
         if: steps.qbt-out-cache.outputs.cache-hit != 'true'
@@ -181,9 +181,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: qbt-prefix
-          key: qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen3-${{ github.run_id }}
+          key: qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen4-${{ github.run_id }}
           restore-keys: |
-            qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen3-
+            qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen4-
 
       # ccache：跨 run 复用编译对象（key 含 run_id 保证每次保存新状态，restore 部分命中）
       - name: Restore ccache
@@ -222,7 +222,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: qbt-prefix
-          key: qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen3-${{ github.run_id }}
+          key: qbt-prefix-${{ matrix.ABI }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-zlibng${{ env.ZLIB_NG_VER }}-boost${{ env.BOOST_VER }}-gen4-${{ github.run_id }}
 
       - name: Save ccache
         if: always() && steps.qbt-out-cache.outputs.cache-hit != 'true'
