@@ -54,6 +54,9 @@ fi
 TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
 NDK_HOST_PREBUILT="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
 API_LEVEL="${ANDROID_PLATFORM#android-}"
+# qtbase 的 QtPlatformAndroid.cmake 要求 ANDROID_SDK_ROOT 作为 CMake 变量（无环境变量回退），
+# 且目录必须存在（jar 缺失仅告警）；默认取 GH runner 预装路径。
+ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
 
 JOBS="$(nproc)"
 [ "$JOBS" -gt 2 ] || JOBS=2
@@ -226,6 +229,7 @@ build_qt_android() {
       -DANDROID_ABI="$ABI" \
       -DANDROID_PLATFORM="$ANDROID_PLATFORM" \
       -DANDROID_STL=c++_static \
+      -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
       -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
       -DCMAKE_PREFIX_PATH="$PREFIX_DIR" \
