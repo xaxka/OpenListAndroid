@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -347,7 +348,7 @@ class QBittorrentManager @Inject constructor(
     /** 轮询 WebUI 版本接口直到返回或超时；返回版本文本（如 v5.2.3.10）或 null。 */
     private suspend fun waitForWebUi(port: Int, timeoutMs: Long): String? {
         val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline && isActive) {
+        while (System.currentTimeMillis() < deadline && currentCoroutineContext().isActive) {
             val proc = process
             if (proc != null && !proc.isAlive) return null // 途中退出按超时处理
             val version = withContext(Dispatchers.IO) {

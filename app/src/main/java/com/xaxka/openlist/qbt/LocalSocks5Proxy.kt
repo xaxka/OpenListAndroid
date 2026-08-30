@@ -40,10 +40,13 @@ class LocalSocks5Proxy {
     val isRunning: Boolean
         get() = server?.isClosed == false
 
-    /** 启动监听（重复调用幂等：已运行直接返回）。失败抛 [IOException]。 */
+    /**
+     * 启动监听（随机高位端口；重复调用幂等），返回实际监听端口。
+     * 失败抛 [IOException]（调用方降级为无代理直连）。
+     */
     @Synchronized
-    fun start() {
-        if (isRunning) return
+    fun start(): Int {
+        if (isRunning) return requireNotNull(port) { "running but port unknown" }
         val sock = ServerSocket()
         try {
             sock.bind(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 128)
@@ -57,6 +60,7 @@ class LocalSocks5Proxy {
             isDaemon = true
             start()
         }
+        return sock.localPort
     }
 
     /** 停止监听并断开全部现存连接（nox 退出路径上一并调用，防 fd 泄漏）。 */

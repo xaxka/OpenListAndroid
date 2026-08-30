@@ -35,6 +35,7 @@ import com.xaxka.openlist.ui.main.HomeScreen
 import com.xaxka.openlist.ui.main.HomeViewModel
 import com.xaxka.openlist.ui.settings.EasyTierSettingsScreen
 import com.xaxka.openlist.ui.settings.EasyTierStatusDetailScreen
+import com.xaxka.openlist.ui.settings.QBittorrentSettingsScreen
 import com.xaxka.openlist.ui.settings.SettingsScreen
 import com.xaxka.openlist.ui.theme.AnimPageFade
 import com.xaxka.openlist.ui.theme.Dimens
