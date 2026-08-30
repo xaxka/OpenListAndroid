@@ -153,12 +153,6 @@ jobs:
         with:
           path: OpenListAndroid
 
-      - name: Setup Android NDK (r27c)
-        id: setup-ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r27c
-
       # 成品内容寻址缓存：全部版本 ref 未变直接复用，跳过整条编译链
       - name: Cache qbt-nox output
         id: qbt-out-cache
@@ -166,6 +160,18 @@ jobs:
         with:
           path: qbt-out
           key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-v1
+
+      - name: Setup Android NDK (r27c)
+        if: steps.qbt-out-cache.outputs.cache-hit != 'true'
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      # ccache 加速重跑（脚本内以 -DNDK_CCACHE 传给 NDK 工具链）
+      - name: Ensure ccache
+        if: steps.qbt-out-cache.outputs.cache-hit != 'true'
+        run: command -v ccache >/dev/null 2>&1 || { sudo apt-get update -q; sudo apt-get install -yq ccache; }
 
       # 依赖前缀缓存：Qt/OpenSSL/zlib-ng/Boost 安装产物按版本复用（阶段幂等，可断点续跑）
       - name: Restore dependency prefix

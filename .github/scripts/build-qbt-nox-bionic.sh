@@ -93,6 +93,13 @@ cmake_common=(
   -DCMAKE_INSTALL_PREFIX="$PREFIX_DIR"
 )
 
+# NDK 工具链的 ccache 接入：必须作为 CMake 变量传递（-DNDK_CCACHE），环境变量不生效
+NDK_CCACHE_ARGS=()
+if command -v ccache >/dev/null 2>&1; then
+  NDK_CCACHE_ARGS=(-DNDK_CCACHE=ccache)
+  cmake_common+=("${NDK_CCACHE_ARGS[@]}")
+fi
+
 log "环境：ABI=$ABI OPENSSL_TARGET=$OPENSSL_TARGET API=$API_LEVEL"
 log "版本：Qt=$QT_VER OpenSSL=$OPENSSL_VER Boost=$BOOST_VER zlib-ng=$ZLIB_NG_VER"
 log "refs：qBt=$QBT_REF libtorrent=$LT_REF"
@@ -165,12 +172,18 @@ install_boost_headers() {
 install_qt_host() {
   stage_done qt-host && return
   log "安装 Qt $QT_VER 桌面版 host 工具（aqt）"
-  local aqt
-  if ! aqt="$(command -v aqt)"; then
-    pipx install aqtinstall || python3 -m pip install --user aqtinstall
-    aqt="$HOME/.local/bin/aqt"
+  local aqt_bin=""
+  if command -v aqt >/dev/null 2>&1; then
+    aqt_bin="$(command -v aqt)"
+  else
+    # 用独立 venv 安装（路径确定；pipx 的 PIPX_BIN_DIR 在 runner 上可能不在 ~/.local/bin）
+    local venv="$BUILD_ROOT/aqt-venv"
+    python3 -m venv "$venv"
+    "$venv/bin/pip" -q install aqtinstall
+    aqt_bin="$venv/bin/aqt"
   fi
-  "$aqt" install-qt -O "$PREFIX_DIR/qt-host" linux desktop "$QT_VER" \
+  echo "aqt: $aqt_bin" >&2
+  "$aqt_bin" install-qt -O "$PREFIX_DIR/qt-host" linux desktop "$QT_VER" \
     --archives qtbase qttools icu
   test -x "$HOST_QT/bin/moc"
   mark_done qt-host
@@ -212,7 +225,8 @@ build_qt_android() {
     -DANDROID_STL=c++_static \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
-    -DCMAKE_PREFIX_PATH="$PREFIX_DIR"
+    -DCMAKE_PREFIX_PATH="$PREFIX_DIR" \
+    "${NDK_CCACHE_ARGS[@]}"
   cmake --build "$WORK_DIR/qt" --parallel "$JOBS"
   cmake --install "$WORK_DIR/qt"
   rm -rf "$WORK_DIR/qt"
@@ -269,7 +283,8 @@ build_qbittorrent() {
     -DQT_HOST_PATH="$HOST_QT" \
     -DCMAKE_PREFIX_PATH="$PREFIX_DIR;$QT_PREFIX" \
     -DOPENSSL_ROOT_DIR="$PREFIX_DIR" \
-    -DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=16384"
+    -DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
+    "${NDK_CCACHE_ARGS[@]}"
   cmake --build "$WORK_DIR/qbt" --parallel "$JOBS"
   cmake --install "$WORK_DIR/qbt"
   test -f "$PREFIX_DIR/bin/qbittorrent-nox"
