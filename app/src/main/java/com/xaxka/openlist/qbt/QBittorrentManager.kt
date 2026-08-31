@@ -14,6 +14,7 @@ import java.net.URL
 import java.net.URLEncoder
 import java.security.KeyStore
 import java.security.cert.X509Certificate
+import java.util.zip.GZIPInputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,14 @@ import kotlinx.coroutines.withContext
  * 内存占用：巡检周期读 /proc/<pid>/status 的 VmRSS（常驻内存）。PID 经
  * /proc/<pid>/cmdline 扫描解析（Java Process 无公开 PID 接口，反射依赖内部
  * 实现；/proc 同 UID 可读，cmdline 匹配二进制名，跨 Android 版本稳定）。
+ * 展示只在运行状态卡的「内存占用」行，summary 摘要行不重复携带。
+ *
+ * GeoIP：启动前把 APK 内置的 dbip-country-lite（CI 构建期注入 assets，见
+ * build.yml）解压种入 `<profile>/qBittorrent/data/GeoDB/`（nox GeoIPManager
+ * 的固定读取路径），首次启动即离线可用国旗解析与 CN peer 过滤，并消除
+ * 「Couldn't load IP geolocation database. Reason: No such file or directory」
+ * 启动噪声；nox 运行期仍每月自动尝试下载更新（网络可达时自会保新，已存在
+ * 不覆盖），asset 缺失（本地构建未注入）时退回 nox 自行下载。
  *
  * TZ=UTC：内置 Qt 的时区后端为 tzfile 版（读 TZ/POSIX 规则，Android 无
  * /etc/localtime），显式指定避免无效时区告警；WebUI 时间戳由浏览器端格式化
@@ -86,7 +95,8 @@ class QBittorrentManager @Inject constructor(
                     if (version.isNotBlank()) append(" · v$version")
                     append(" · ")
                     append(if (lanAccess) "局域网:$webUiPort" else "127.0.0.1:$webUiPort")
-                    if (memUsageKb > 0) append(" · ").append(formatMemUsage(memUsageKb))
+                    // 内存不并入摘要：运行状态卡已有专门「内存占用」行（此前两处
+                    // 重复展示同一 VmRSS 值），EasyTier 摘要同样不携带内存
                 }.appendDetail(detail)
                 Phase.ERROR -> "错误".appendDetail(detail)
                 Phase.UNAVAILABLE -> "不可用".appendDetail(detail)
@@ -94,7 +104,10 @@ class QBittorrentManager @Inject constructor(
 
         val webUiUrl: String get() = "http://127.0.0.1:$webUiPort"
 
-        /** 内存占用展示文案（MB，一位小数；<0.1MB 显示 0.1）。 */
+        /**
+         * 内存占用展示文案（MB，一位小数；<0.1MB 显示 0.1）。
+         * 运行状态卡「内存占用」行专用（摘要行不携带内存，避免同值双处展示）。
+         */
         val memUsageText: String
             get() = if (memUsageKb > 0) formatMemUsage(memUsageKb) + "（常驻）" else ""
 
@@ -217,6 +230,14 @@ class QBittorrentManager @Inject constructor(
         // 持久化的其他键）
         runCatching { ensureConfig(profileDir, port, lanAccess, saveDir.absolutePath, webUiPassword) }
             .onFailure { log(LoggableLevel.WARN, "写入/更新配置失败：${it.message}") }
+
+        // GeoIP 数据库种子：构建期内置的 dbip-country-lite 解出到 nox 数据目录
+        // （缺失时），首次启动即离线可用国旗解析/CN peer 过滤，并消除
+        // 「Couldn't load IP geolocation database」启动噪声；已存在不覆盖
+        // （nox 每月自动下载更新，保新），asset 缺失（本地构建未注入）时静默
+        // 跳过，退回 nox 运行时自行下载。
+        runCatching { withContext(Dispatchers.IO) { seedGeoIpDatabase(profileDir) } }
+            .onFailure { log(LoggableLevel.WARN, "GeoIP 数据库种子解出失败：${it.message}") }
 
         transition(
             Status(Phase.STARTING, webUiPort = port, savePath = saveDir.absolutePath, lanAccess = lanAccess)
@@ -422,6 +443,41 @@ class QBittorrentManager @Inject constructor(
     }
 
     /**
+     * GeoIP 数据库种子：把 APK 内置的 dbip-country-lite（CI 构建期从 db-ip.com
+     * 下载的月度库，gzip 压缩）解压到 nox 数据目录
+     * `<profile>/qBittorrent/data/GeoDB/dbip-country-lite.mmdb`（nox
+     * GeoIPManager 的固定读取路径，见上游 geoipmanager.cpp GEODB_FOLDER）。
+     *
+     * 仅在目标缺失时种入：nox 运行期每月自动下载更新（网络可达时保新），已存在
+     * （nox 已自行下载过更新版本）不覆盖。经临时文件 + 原子重命名落盘，避免
+     * 进程中途被杀残留半写库被 nox 判为损坏；asset 缺失（本地构建未注入，见
+     * build.yml 注入步骤）时记 INFO 并跳过，退回 nox 运行时自行下载。
+     */
+    private fun seedGeoIpDatabase(profileDir: File) {
+        val target = File(profileDir, "qBittorrent/data/GeoDB/$GEOIP_DB_FILE_NAME")
+        if (target.isFile) return
+        val assetStream = runCatching { appContext.assets.open(GEOIP_ASSET_PATH) }.getOrNull()
+        if (assetStream == null) {
+            log(LoggableLevel.INFO, "APK 未内置 GeoIP 数据库（本地构建？），由 qbittorrent 启动后自行下载")
+            return
+        }
+        target.parentFile?.mkdirs()
+        val tmp = File(target.parentFile, "$GEOIP_DB_FILE_NAME.tmp")
+        runCatching {
+            assetStream.use { raw ->
+                GZIPInputStream(raw).use { gz ->
+                    tmp.outputStream().use { out -> gz.copyTo(out, 64 * 1024) }
+                }
+            }
+            check(tmp.renameTo(target)) { "重命名到 ${target.name} 失败" }
+        }.onFailure {
+            tmp.delete()
+            throw it
+        }
+        log(LoggableLevel.INFO, "已种入内置 GeoIP 数据库（dbip-country-lite）")
+    }
+
+    /**
      * 导出 Android 系统 CA 信任库为 PEM 束（全部证书拼接单文件），供 nox 裸进程
      * HTTPS 证书验证使用（GeoIP 数据库下载、HTTPS tracker）。
      *
@@ -622,6 +678,12 @@ class QBittorrentManager @Inject constructor(
 
         /** AndroidCAStore 导出的 PEM 信任束文件名（filesDir 下，每轮启动刷新）。 */
         const val CA_BUNDLE_NAME = "qbt-ca-bundle.pem"
+
+        /** APK 内置 GeoIP 数据库 asset 路径（CI 构建期注入 dbip-country-lite 月度库，gzip 压缩）。 */
+        const val GEOIP_ASSET_PATH = "geoip/dbip-country-lite.mmdb.gz"
+
+        /** nox 数据目录内的 GeoIP 数据库文件名（GeoIPManager 固定读取路径）。 */
+        const val GEOIP_DB_FILE_NAME = "dbip-country-lite.mmdb"
 
         /** /proc/<pid>/status 中 VmRSS 行（单位固定 kB）。 */
         val VmRssPattern = Regex("VmRSS:\\s+(\\d+) kB")

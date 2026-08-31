@@ -464,6 +464,58 @@ build_libtorrent() {
   rm -rf "$WORK_DIR/libtorrent"
 }
 
+# ---------------------------------------------------------------- qbittorrent 补丁
+#
+# peer 黑白名单文件缺失噪声抑制：
+# qbittorrent-enhanced 的 peer_filter_session_plugin 在启动时对 data 目录下的
+# peer_blacklist.txt / peer_whitelist.txt 逐一检查，缺失即各记一条 NORMAL 日志：
+#   'peer_blacklist.txt' doesn't exist. The corresponding filter is disabled.
+#   'peer_whitelist.txt' doesn't exist. The corresponding filter is disabled.
+# 该两文件为可选的进阶功能（regex 规则过滤 peer，须 adb 手工放置到应用私有
+# data 目录），绝大多数用户永不创建，文件缺失即禁用本就是预期默认态——每次
+# 启动刷两条日志属纯噪声。补丁：缺失时静默禁用（不发日志）；文件存在时的
+# 提示（规则数 INFO / 无有效规则 WARNING）保持不变，不影响真正使用该功能的
+# 用户。缓存 key 须随本补丁代数同步 bump（见 build.yml -bare-v8）。
+patch_qbt_android() {
+  local src="$1"
+  python3 - "$src" <<'PYEOF'
+import sys
+
+root = sys.argv[1]
+
+def patch(rel_path, replacements):
+    path = f"{root}/{rel_path}"
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    for old, new in replacements:
+        if new in text:
+            continue  # 已应用（幂等：脚本可能对同一源码树多次执行）
+        count = text.count(old)
+        if count != 1:
+            sys.exit(f"qbt android patch: pattern count={count} in {rel_path}: {old[:72]!r}")
+        text = text.replace(old, new, 1)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    print(f"qbt android patch: {rel_path} OK")
+
+patch("src/base/bittorrent/peer_filter_session_plugin.hpp", [
+    ("  if (!QFile::exists(filter_file)) {\n"
+     "    LogMsg(u\"'%1' doesn't exist. The corresponding filter is disabled.\"_s.arg(filename), Log::NORMAL);\n"
+     "\n"
+     "    return nullptr;\n"
+     "  }\n",
+     "  if (!QFile::exists(filter_file)) {\n"
+     "    // [OpenListAndroid] absence is the expected default state (optional\n"
+     "    // power-user feature; requires manually placing the file in the app\n"
+     "    // private data dir); stay silent instead of logging on every startup.\n"
+     "    // Messages for existing files (rule count / no-valid-rules warning)\n"
+     "    // are unchanged.\n"
+     "    return nullptr;\n"
+     "  }\n"),
+])
+PYEOF
+}
+
 # ---------------------------------------------------------------- qbittorrent-nox
 build_qbittorrent() {
   log "构建 qbittorrent-enhanced-nox（$QBT_REF）"
@@ -475,6 +527,8 @@ build_qbittorrent() {
     git -C "$src" checkout -q FETCH_HEAD
     git -C "$src" log -1 --oneline >&2 || true
   fi
+  # peer 黑白名单文件缺失噪声抑制（见 patch_qbt_android 头注释）
+  patch_qbt_android "$src"
   rm -rf "$WORK_DIR/qbt"
   cmake -S "$src" -B "$WORK_DIR/qbt" \
     -G Ninja \

@@ -2,8 +2,6 @@ package com.xaxka.openlist.ui.settings
 
 import android.content.Intent
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,12 +14,12 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -39,7 +37,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,10 +54,8 @@ import com.xaxka.openlist.qbt.QBittorrentManager
 import com.xaxka.openlist.qbt.QBittorrentSpec
 import com.xaxka.openlist.ui.theme.InputHint
 import com.xaxka.openlist.ui.theme.InputLabel
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 设置子页：qbittorrent（内置 qBittorrent Enhanced nox）。
@@ -70,8 +65,18 @@ import kotlinx.coroutines.withContext
  * 由「打开 WebUI」跳系统浏览器管理。可开启「局域网访问」：监听切 0.0.0.0，
  * 其他设备经 http://<本机IP>:<端口> 登录（默认 admin/adminadmin，可在
  * 「登录账号」中修改密码；本机仍免登录）。
- * 内存：启动时下发手机场景调优（磁盘缓存上限 64MiB 等）；运行状态卡实时
- * 展示 nox 进程常驻内存（VmRSS）。
+ *
+ * 内存：启动时下发手机场景调优（磁盘缓存上限 16MiB、校验内存 8MiB、IO 线程
+ * 2 等）；运行状态卡「内存占用」行实时展示 nox 进程常驻内存（VmRSS），
+ * 摘要行不重复携带。
+ *
+ * GeoIP：APK 内置 dbip-country-lite 月度库（CI 构建期注入），首次启动种入
+ * nox 数据目录，国旗解析/CN peer 过滤离线即用；nox 运行期每月自动尝试更新。
+ *
+ * 日记：qbittorrent 自带日志（WebUI「日志」页查看，文件位于应用数据目录
+ * qbt-profile/qBittorrent/data/logs/qbittorrent.log），App 侧不再提供
+ * 事件日记导出。进阶 peer 过滤（peer_blacklist.txt / peer_whitelist.txt，
+ * 每行「peer_id 正则 客户端正则」）为可选功能，不创建即禁用。
  */
 @Composable
 fun QBittorrentSettingsScreen(
@@ -84,27 +89,6 @@ fun QBittorrentSettingsScreen(
     var showPasswordDialog by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    // 导出事件日记：系统「另存为」选择目标，把最近 24h 事件写到用户指定文件
-    val exportDiaryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                val text = viewModel.qbtEventDiaryText()
-                if (text.isEmpty()) return@withContext false
-                runCatching {
-                    context.contentResolver.openOutputStream(uri)?.use { os ->
-                        os.write(text.toByteArray())
-                    } ?: return@runCatching false
-                    true
-                }.getOrDefault(false)
-            }
-            viewModel.snack(if (ok) "事件日记已导出" else "导出失败或无日记")
-        }
-    }
 
     LaunchedEffect(Unit) {
         viewModel.snackEvents.collect { event ->
@@ -197,11 +181,12 @@ fun QBittorrentSettingsScreen(
                     }
                 )
 
+                // 说明行（无点击动作）：qbittorrent 自带日记，App 侧不再重复提供
+                // 事件日记导出
                 SettingsBasicPreference(
-                    title = "导出事件日记",
-                    subtitle = "保存最近 24 小时事件到文件（跨重启不丢）",
-                    leading = { SettingsPreferenceIcon(Icons.Outlined.SaveAlt) },
-                    onTap = { exportDiaryLauncher.launch("qbittorrent-events.txt") }
+                    title = "qbittorrent 日记",
+                    subtitle = "qbittorrent 自带日记：WebUI「日志」页查看；文件位于应用数据目录 qbt-profile/qBittorrent/data/logs/qbittorrent.log",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.Article) },
                 )
             }
         }
@@ -257,7 +242,8 @@ private fun QbtStatusSection(
                 "监听",
                 if (detail.lanAccess) "0.0.0.0（局域网需登录，本机 localhost 免登录）" else "仅本机（localhost 免鉴权）",
             )
-            // nox 进程常驻内存（VmRSS，5s 巡检采样；未采样到则不显示）
+            // nox 进程常驻内存（VmRSS，5s 巡检采样；未采样到则不显示）。
+            // 唯一展示点：摘要行不携带内存，避免同值双处重复
             QbtStatusKV("内存占用", detail.memUsageText)
         }
         if (detail.savePath.isNotBlank()) QbtStatusKV("保存路径", detail.savePath)

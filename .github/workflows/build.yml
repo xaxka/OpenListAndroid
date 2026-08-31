@@ -154,14 +154,16 @@ jobs:
           path: OpenListAndroid
 
       # 成品内容寻址缓存：全部版本 ref 未变直接复用，跳过整条编译链
-      # （-bare-v7：qtbase 裸进程 CA 补丁——systemCaCertificates 改读
+      # （-bare-v8：qbt 源补丁——peer 黑白名单文件缺失时静默禁用，
+      #  去除每次启动的两条 "doesn't exist. The corresponding filter is disabled." 噪声；
+      #  此前 -v7 为 qtbase 裸进程 CA 补丁——systemCaCertificates 改读
       #  SSL_CERT_FILE 信任束，修复 GeoIP 下载/TLS 验证）
       - name: Cache qbt-nox output
         id: qbt-out-cache
         uses: actions/cache@v4
         with:
           path: qbt-out
-          key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-bare-v7
+          key: qbt-nox-bionic-${{ matrix.ABI }}-qbt${{ env.QBT_REF }}-lt${{ env.LT_REF }}-qt${{ env.QT_VER }}-ssl${{ env.OPENSSL_VER }}-bare-v8
 
       - name: Setup Android NDK (r27c)
         if: steps.qbt-out-cache.outputs.cache-hit != 'true'
@@ -390,6 +392,36 @@ jobs:
               exit 1
             fi
           done
+
+      # GeoIP 数据库（dbip-country-lite，CC BY 4.0）注入 assets：
+      # nox 的 GeoIPManager 固定从 <profile>/qBittorrent/data/GeoDB/ 读
+      # dbip-country-lite.mmdb，缺失时每次启动必报
+      # "Couldn't load IP geolocation database. Reason: No such file or directory"，
+      # 且部分网络不可达 db-ip.com 导致运行期下载兜底长期失败。构建期注入月度库，
+      # App 首启解出种子（QBittorrentManager.seedGeoIpDatabase，仅缺失时种入，
+      # 不覆盖 nox 每月自更新的新库）。当月库尚未发布（每月 1 日）时回退上个月；
+      # 两级都失败仅告警不阻断（App 检测 asset 缺失后静默退回 nox 自行下载）。
+      - name: Inject GeoIP database (dbip-country-lite)
+        run: |
+          set -eu
+          mkdir -p app/src/main/assets/geoip
+          dest="app/src/main/assets/geoip/dbip-country-lite.mmdb.gz"
+          ok=""
+          for m in "$(date -u +%Y-%m)" "$(date -u -d 'last month' +%Y-%m)"; do
+            url="https://download.db-ip.com/free/dbip-country-lite-${m}.mmdb.gz"
+            echo "尝试下载 $url"
+            if curl -fSL --retry 3 --retry-delay 5 --connect-timeout 20 "$url" -o "$dest" && gzip -t "$dest"; then
+              ok="$m"
+              break
+            fi
+          done
+          if [ -z "$ok" ]; then
+            echo "::warning::GeoIP 数据库下载失败，本次构建不内置（App 将退回 qbittorrent 运行时自行下载）"
+            rm -f "$dest"
+          else
+            ls -lh "$dest"
+            echo "GeoIP 数据库已注入：dbip-country-lite-$ok"
+          fi
 
       # 与源项目同名 Secrets 键；gradle 侧由 app/build.gradle.kts 读取 local.properties
       - name: Init Signature

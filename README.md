@@ -7,6 +7,7 @@
 - **一键启停服务器**：前台服务常驻（specialUse，规避 Android 15+ 前台服务时长限制），通知栏 / 快速设置磁贴 / 桌面快捷方式均可控制
 - **内置网页**：底部导航 WebView 直开 OpenList Web 管理页，服务启动后可自动跳转
 - **内网映射（EasyTier）**：no-tun 模式、不申请 VPN，组网设备经虚拟 IP 直达本机任意端口（如 5244），无需端口转发规则；支持对等节点、网络密钥、QUIC 代理；内置后台冻结/清理自愈
+- **BT 下载（qbittorrent-enhanced-nox）**：内置 bionic 交叉编译二进制随 APK 分发，随服务启停；WebUI 管理下载（默认仅本机免登录，可开局域网访问）；内置 db-ip GeoIP 国旗库离线即用（nox 运行期每月自动尝试更新）；面向手机内存的磁盘缓存/线程数调优
 - **其他**：开机自启、保持唤醒、深色模式/动态配色、数据目录自定义
 
 ## 下载
@@ -27,23 +28,26 @@
 
 - `app/libs` 无 Go AAR 时自动启用 alistlib 编译桩，无 Go 环境也能完整编译（运行服务器功能需要真实 AAR）
 - 自行打包内核：安装 Go（版本见 `alist-lib/go.mod`）与 NDK，依次执行 `alist-lib/scripts/` 下 `init_alist.sh` → `init_web.sh` → `init_gomobile.sh` → `gobind.sh`，产物落入 `app/libs`
-- EasyTier 原生库（Rust 交叉编译）由 CI 产出并注入 `app/src/main/jniLibs`，本地缺失时内网映射功能自动降级
+- EasyTier 原生库（Rust 交叉编译）由 CI 产出并注入 `app/src/main/jniLibs`，本地缺失时内网映射功能自动降级；qbittorrent-nox 与 GeoIP 国旗库（`app/src/main/assets/geoip/`）同样由 CI 注入，GeoIP 缺失时 qbittorrent 启动后自行下载（首次启动日志会多一条加载失败提示，联网后自动恢复）
 
 ## 项目结构
 
 ```
 app/                 应用主体（Compose UI / 前台服务）
 ├─ easytier/         EasyTier 实例管理、状态解析与自愈
+├─ qbt/              qbittorrent-enhanced-nox 进程管理与配置调优
 ├─ service/          OpenList 前台服务与状态机
 └─ ui/               主页 / 设置 / 导航
 alist-lib/           Go 内核绑定层（gomobile 脚本 + alistlib 桥接代码）
-.github/workflows/   CI：EasyTier JNI（Rust）+ Go AAR 内容寻址缓存 + 签名分包发布
+.github/workflows/   CI：EasyTier JNI（Rust）+ qbittorrent-nox（NDK）+ Go AAR 内容寻址缓存 + 签名分包发布
 ```
 
 ## 致谢
 
 - [OpenListTeam/OpenList](https://github.com/OpenListTeam/OpenList)（AGPL-3.0）— 文件服务器内核
 - [EasyTier/EasyTier](https://github.com/EasyTier/EasyTier)（LGPL-3.0）— 虚拟局域网
+- [c0re100/qBittorrent-Enhanced-Edition](https://github.com/c0re100/qBittorrent-Enhanced-Edition)（GPL-2.0）— BT 下载内核（nox）
+- [db-ip.com](https://db-ip.com/)（CC BY 4.0）— dbip-country-lite IP 地理位置库（CI 构建期获取，随 APK 内置）
 
 ## 许可证
 

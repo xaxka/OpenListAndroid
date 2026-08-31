@@ -8,7 +8,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.xaxka.openlist.data.log.EasyTierEventLog
-import com.xaxka.openlist.data.log.QBittorrentEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
 import com.xaxka.openlist.qbt.QBittorrentManager
@@ -41,7 +40,6 @@ class SettingsViewModel @Inject constructor(
     private val serverManager: ServerManager,
     private val eventLog: EasyTierEventLog,
     private val qBittorrent: QBittorrentManager,
-    private val qbtEventLog: QBittorrentEventLog,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
 
@@ -381,9 +379,6 @@ class SettingsViewModel @Inject constructor(
             )
         }
     }
-
-    /** 读取 qBittorrent 事件日记（最近 24h，旧→新原始文本），供「导出事件日记」写出。 */
-    fun qbtEventDiaryText(): String = qbtEventLog.readRecent()
 
     fun snack(
         message: String,

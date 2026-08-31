@@ -46,6 +46,11 @@ import javax.crypto.spec.PBEKeySpec
  * 传给 nox（见 [com.xaxka.openlist.qbt.QBittorrentManager.exportCaBundle]），
  * qtbase 裸进程补丁的 systemCaCertificates() 与 libtorrent 的 OpenSSL 默认
  * 验证路径均读该变量，GeoIP 下载与 HTTPS tracker 证书校验一并恢复。
+ * 库本体另由 App 预种：构建期注入 assets 的 dbip-country-lite（CI 见 build.yml）
+ * 在 nox 首次启动前解出到数据目录（见
+ * [com.xaxka.openlist.qbt.QBittorrentManager.seedGeoIpDatabase]），离线即用，
+ * 消除「Couldn't load IP geolocation database. Reason: No such file or
+ * directory」启动噪声；nox 运行期每月自动尝试下载更新。
  */
 object QBittorrentSpec {
 
