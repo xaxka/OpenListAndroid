@@ -3,6 +3,7 @@ package com.xaxka.openlist.qbt
 import android.content.Context
 import android.os.Build
 import android.os.Environment
+import android.util.Base64
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.log.QBittorrentEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
@@ -11,6 +12,8 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.KeyStore
+import java.security.cert.X509Certificate
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -228,6 +231,13 @@ class QBittorrentManager @Inject constructor(
         val proc = try {
             withContext(Dispatchers.IO) {
                 val cacheDir = appContext.cacheDir
+                // TLS 信任束：AndroidCAStore → PEM（系统 + 用户自装 CA），nox 侧
+                // HTTPS 证书验证（GeoIP 数据库下载、HTTPS tracker）依赖它，见
+                // [exportCaBundle]
+                val caBundle = exportCaBundle(File(appContext.filesDir, CA_BUNDLE_NAME))
+                if (caBundle == null) {
+                    log(LoggableLevel.WARN, "系统 CA 信任束导出失败：nox HTTPS 证书验证不可用（GeoIP 下载/HTTPS tracker）")
+                }
                 val pb = ProcessBuilder(
                     binary.absolutePath,
                     "--confirm-legal-notice",
@@ -250,6 +260,10 @@ class QBittorrentManager @Inject constructor(
                         // 显式 UTC 保证有效时区（POSIX 规则，零偏移）；WebUI 时间
                         // 由浏览器端格式化 epoch，不受影响
                         put("TZ", "UTC")
+                        // TLS 信任锚：qtbase 裸进程补丁的 systemCaCertificates() 与
+                        // libtorrent 的 OpenSSL 默认验证路径均读该变量；导出失败时
+                        // 不注入（退回无 CA 行为，与修复前一致）
+                        caBundle?.let { put("SSL_CERT_FILE", it.absolutePath) }
                     }
                 }
                 pb.start()
@@ -406,6 +420,37 @@ class QBittorrentManager @Inject constructor(
         val match = VmRssPattern.find(status) ?: return -1L
         return match.groupValues[1].toLongOrNull() ?: -1L
     }
+
+    /**
+     * 导出 Android 系统 CA 信任库为 PEM 束（全部证书拼接单文件），供 nox 裸进程
+     * HTTPS 证书验证使用（GeoIP 数据库下载、HTTPS tracker）。
+     *
+     * nox 无 JVM，无法经 JNI 走 AndroidCAStore/TrustManager——qtbase 裸进程补丁把
+     * systemCaCertificates() 的 Android 分支改为读 SSL_CERT_FILE 指向的 PEM 束，
+     * libtorrent 的 OpenSSL 默认验证路径读同一变量。经框架 KeyStore API 枚举：
+     * 无 SELinux/路径兼容问题（Android 14+ 系统证书已迁 conscrypt APEX，文件
+     * 路径不稳），且天然含用户自装 CA。每次启动刷新（跟随系统/用户证书更新）；
+     * 失败返回 null（调用方不注入环境变量，退回无 CA 行为，与修复前一致）。
+     */
+    private fun exportCaBundle(target: File): File? = runCatching {
+        val keyStore = KeyStore.getInstance("AndroidCAStore").apply { load(null) }
+        val out = StringBuilder()
+        for (alias in keyStore.aliases()) {
+            val cert = keyStore.getCertificate(alias) as? X509Certificate ?: continue
+            val b64 = Base64.encodeToString(cert.encoded, Base64.NO_WRAP)
+            out.append("-----BEGIN CERTIFICATE-----\n")
+            var i = 0
+            while (i < b64.length) { // PEM 标准行宽 64 字符
+                out.append(b64, i, minOf(i + 64, b64.length)).append('\n')
+                i += 64
+            }
+            out.append("-----END CERTIFICATE-----\n")
+        }
+        check(out.isNotEmpty()) { "AndroidCAStore 无证书可导出" }
+        target.parentFile?.mkdirs()
+        target.writeText(out.toString())
+        target
+    }.getOrNull()
 
     /** 轮询 WebUI 版本接口直到返回或超时；返回版本文本（如 v5.2.3.10）或 null。 */
     private suspend fun waitForWebUi(port: Int, timeoutMs: Long): String? {
@@ -574,6 +619,9 @@ class QBittorrentManager @Inject constructor(
         const val WEBUI_READY_TIMEOUT_MS = 20_000L
         const val FAST_FAIL_MS = 10_000L
         const val FAST_FAIL_LIMIT = 3
+
+        /** AndroidCAStore 导出的 PEM 信任束文件名（filesDir 下，每轮启动刷新）。 */
+        const val CA_BUNDLE_NAME = "qbt-ca-bundle.pem"
 
         /** /proc/<pid>/status 中 VmRSS 行（单位固定 kB）。 */
         val VmRssPattern = Regex("VmRSS:\\s+(\\d+) kB")

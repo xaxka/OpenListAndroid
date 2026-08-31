@@ -40,10 +40,12 @@ import javax.crypto.spec.PBEKeySpec
  * DHT：显式开启；引导路由器固定官方 3 节点（见 [DHT_BOOTSTRAP_NODES]；
  * 移动网络下 0 节点为运营商干扰，非客户端问题）。
  *
- * GeoIP：禁用（ResolvePeerCountries=false，qb 默认 true）。Android 裸进程经
- * qtbase 补丁后系统 CA 列表为空，db-ip.com 的 HTTPS 证书链校验必失败，启动期
- * 连刷「无法加载/SSL 错误/无法下载 IP 地理数据库」三条错误日志；该库仅服务
- * WebUI peer 列表的国旗展示（纯装饰），禁用后噪声清零、省一次联网尝试。
+ * GeoIP：启用（qb 默认 ResolvePeerCountries=true）。此前 Android 裸进程无 JVM
+ * 拿不到系统 CA 证书，db-ip.com 证书链校验必失败（连刷三条错误日志）而一度
+ * 禁用；现经 TLS 信任束修复——App 从 AndroidCAStore 导出 PEM 经 SSL_CERT_FILE
+ * 传给 nox（见 [com.xaxka.openlist.qbt.QBittorrentManager.exportCaBundle]），
+ * qtbase 裸进程补丁的 systemCaCertificates() 与 libtorrent 的 OpenSSL 默认
+ * 验证路径均读该变量，GeoIP 下载与 HTTPS tracker 证书校验一并恢复。
  */
 object QBittorrentSpec {
 
@@ -262,9 +264,8 @@ object QBittorrentSpec {
         append("WebUI\\LocalHostAuth=false\n")
         append("WebUI\\Username=").append(WEBUI_USERNAME).append('\n')
         append("WebUI\\Password_PBKDF2=").append(buildWebUiPasswordIniValue(webUiPassword)).append('\n')
-        // GeoIP 禁用（qb 默认 true）：Android 无系统 CA 文件，db-ip.com 证书链校验
-        // 必失败且连刷三条错误日志；国旗展示纯装饰，禁用（见文件头注释）
-        append("Connection\\ResolvePeerCountries=false\n")
+        // GeoIP 不写键（qb 默认 true 开启）：TLS 信任束已修复下载证书校验，
+        // 国旗数据库正常工作（见文件头注释）
     }
 
     /**
@@ -276,8 +277,8 @@ object QBittorrentSpec {
      *   自定义密码时为该密码的哈希——用户改密后配置层与 DataStore 保持一致）；
      * - 对齐内存调优与 DHT 引导键（[BitTorrent] Session\*，与启动 setPreferences
      *   双层互补；用户在 WebUI 关掉 DHT 不被此层覆盖——仅对齐引导节点列表）；
-     * - 对齐 GeoIP 禁用键（[Preferences] Connection\ResolvePeerCountries=false，
-     *   升级迁移：旧版本未写入该键，qb 默认 true 会在启动期连刷三条下载错误）；
+     * - 清理 GeoIP 禁用残留键（Connection\ResolvePeerCountries，旧版曾禁用；
+     *   TLS 信任束修复后恢复 qb 默认 true 国旗解析）；
      * - 清理代理键（升级迁移 + 无代理策略）：[Network] Proxy\*（qb 5.2 键位，旧
      *   SOCKS5 方案残留；不清则 DHT/UDP 流量继续交给已不存在的代理被丢弃）与
      *   [Preferences] Session\Proxy*（qb ≤5.0 旧键位，顺手清理）。
@@ -295,10 +296,9 @@ object QBittorrentSpec {
             "WebUI\\Username" to WEBUI_USERNAME,
             "WebUI\\Password_PBKDF2" to buildWebUiPasswordIniValue(webUiPassword),
             "WebUI\\LocalHostAuth" to "false",
-            "Connection\\ResolvePeerCountries" to "false",
         )
         val sessionUpdates = MEMORY_TUNING_INI + ("Session\\DHTBootstrapNodes" to DHT_BOOTSTRAP_NODES)
-        // 先按节过滤代理键，再做键对齐
+        // 先按节过滤目标键（代理残留 + GeoIP 禁用残留），再做键对齐
         val stripped = mutableListOf<String>()
         var section = ""
         for (raw in content.lines()) {
@@ -308,10 +308,13 @@ object QBittorrentSpec {
                 stripped += raw
                 continue
             }
+            // GeoIP 禁用残留（旧版曾写 ResolvePeerCountries=false；TLS 信任束修复
+            // 后恢复 qb 默认 true，键残留会继续压制国旗解析与库下载）
+            val isLegacyGeoIpKey = trimmed.startsWith("Connection\\ResolvePeerCountries=")
             val isProxyKey =
                 (section == "[Network]" && trimmed.startsWith("Proxy\\")) ||
                     (section == "[Preferences]" && trimmed.startsWith("Session\\Proxy"))
-            if (!isProxyKey) stripped += raw
+            if (!isProxyKey && !isLegacyGeoIpKey) stripped += raw
         }
         val lines = stripped.toMutableList()
 
@@ -354,9 +357,11 @@ object QBittorrentSpec {
      * 运行态自愈层：本机回环免认证（LocalHostAuth=false）下调用，无论配置文件
      * 处于何种历史状态，都对齐账号 admin、密码 [webUiPassword]（默认
      * adminadmin，自定义密码时为用户所设——qb 侧自行 PBKDF2 哈希落盘）、
-     * localhost 免认证、保存路径、内存调优与 DHT 引导节点；并对齐 GeoIP
-     * 禁用（resolve_peer_countries=false，qb 默认 true 会下载国旗数据库，
-     * Android 无系统 CA 必失败——见文件头注释）。
+     * localhost 免认证、保存路径、内存调优与 DHT 引导节点。
+     *
+     * GeoIP 不携带字段：TLS 信任束已修复下载证书校验（见文件头注释），
+     * resolve_peer_countries 保持 qb 默认 true（配置文件层由
+     * [updateWebUiConfig] 清理旧禁用残留）。
      *
      * 不携带 enable_dht 布尔：尊重用户在 WebUI 的 DHT 开关选择（种子层已按
      * qb 默认值开启）；只对齐引导节点列表（基础设施配置）。
@@ -371,7 +376,6 @@ object QBittorrentSpec {
         append("{\"web_ui_username\":\"").append(escapeJson(WEBUI_USERNAME))
         append("\",\"web_ui_password\":\"").append(escapeJson(webUiPassword))
         append("\",\"bypass_local_auth\":true")
-        append(",\"resolve_peer_countries\":false")
         append(",\"save_path\":\"").append(escapeJson(savePath)).append("\"")
         MEMORY_TUNING_JSON.forEach { (k, v) -> append(",\"").append(k).append("\":").append(v) }
         append(",\"dht_bootstrap_nodes\":\"").append(escapeJson(DHT_BOOTSTRAP_NODES)).append("\"}")

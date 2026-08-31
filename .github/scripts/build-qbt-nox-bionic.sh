@@ -290,10 +290,20 @@ patch("src/corelib/kernel/qjniobject.cpp", [
 patch("src/plugins/tls/openssl/qtlsbackend_openssl.cpp", [
     # systemCaCertificates()：Android 分支经 JNI 调 QtNative.getSSLCertificates
     # （qsslsocket_openssl_android.cpp fetchSslCertificateData），Session 初始化
-    # 即触发（qemu 实测第 4 崩点）。删除该分支落到 Q_OS_UNIX：扫 Unix 证书目录
-    # （Android 上为空列表，与旧 musl 静态版行为一致，无 JNI）
+    # 即触发（qemu 实测第 4 崩点）。裸进程无 JVM → 改为加载 App 侧从
+    # AndroidCAStore（KeyStore Java API，含用户自装证书）导出的 PEM 信任束，
+    # 路径由 SSL_CERT_FILE 环境变量传入；libtorrent 的 OpenSSL 默认验证路径
+    # 读同一变量（HTTPS tracker 证书校验一并修复）。变量缺失时回退空列表
+    # （与旧 musl 静态版行为一致，不劣化）。
     ("#elif defined(Q_OS_ANDROID)\n    const QList<QByteArray> certData = fetchSslCertificateData();\n    for (auto certDatum : certData)\n        systemCerts.append(QSslCertificate::fromData(certDatum, QSsl::Der));\n",
-     ""),
+     "#elif defined(Q_OS_ANDROID)\n"
+     "    // bare exec (no JVM): fetchSslCertificateData() requires JNI. Load the\n"
+     "    // PEM trust bundle exported by the embedding app from AndroidCAStore\n"
+     "    // instead (SSL_CERT_FILE env; OpenSSL's default verify paths -- e.g.\n"
+     "    // libtorrent HTTPS tracker validation -- honor the same variable).\n"
+     "    const QString caBundlePath = qEnvironmentVariable(\"SSL_CERT_FILE\");\n"
+     "    if (!caBundlePath.isEmpty())\n"
+     "        systemCerts.append(QSslCertificate::fromPath(caBundlePath, QSsl::Pem));\n"),
 ])
 
 patch("src/network/kernel/qnetworkproxy_android.cpp", [
@@ -369,9 +379,13 @@ PYEOF
 }
 
 build_qt_android() {
-  stage_done qt-android && return
+  # stage 名含补丁代数：qtbase 裸进程补丁改动后必须强制重建（源码树在
+  # $PREFIX_DIR.build 不进缓存，每轮全新解压，补丁总是对 pristine 源码应用；
+  # 但已安装产物与标记随 prefix 缓存恢复，仅 bump stage 名可破除跳过）
+  stage_done qt-android-v2 && return
   log "构建 qtbase $QT_VER（Android $ABI 静态：Core/Network/Sql/Xml）"
   local src="$SRC_DIR/qtbase-$QT_VER"
+  rm -rf "$src"
   if [ ! -d "$src" ]; then
     local major="${QT_VER%.*}"
     fetch "https://download.qt.io/official_releases/qt/$major/$QT_VER/submodules/qtbase-everywhere-src-$QT_VER.tar.xz" \
@@ -415,7 +429,7 @@ build_qt_android() {
   cmake --build "$bdir" --parallel "$JOBS"
   cmake --install "$bdir"
   rm -rf "$bdir"
-  mark_done qt-android
+  mark_done qt-android-v2
 }
 
 # ---------------------------------------------------------------- libtorrent
