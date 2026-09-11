@@ -123,17 +123,9 @@ class ServerManager @Inject constructor(
                 if (st == ServerState.STOPPED) _serverUrl.value = null
             }
         }
-        // EasyTier 内网映射随服务启停：RUNNING 时按偏好拉起，进入停止流程即回收。
-        // 偏好开关由 EasyTierManager 自行读取，这里只转发服务状态。
-        scope.launch {
-            core.state.collect { st ->
-                when (st) {
-                    ServerState.RUNNING -> easyTier.startIfEnabled()
-                    ServerState.STOPPING, ServerState.STOPPED -> easyTier.stop()
-                    else -> Unit
-                }
-            }
-        }
+        // EasyTier 内网映射已与 OpenList 服务解耦：不再随服务状态启停（OpenList 停止/
+        // 崩溃时链路保持），实例由 EasyTierManager 自驱（进程存活即运行 + 设置页开关），
+        // 保活由专属 EasyTierService 前台服务负责。
         // 内核版本（assets/openlist_version，当前 v4.2.5）
         scope.launch(Dispatchers.IO) {
             val version = runCatching {
@@ -216,11 +208,10 @@ class ServerManager @Inject constructor(
      * App 回前台回调（ProcessLifecycleOwner ON_START，由 Application 转发）。
      * OPPO 等厂商后台会冻结/清理进程：解冻回前台后 OpenList 内核通常仍在，
      * 但 EasyTier 原生实例可能已丢失——这里以原生侧实际状态为准校验并按需恢复。
+     * EasyTier 与服务状态解耦：无论 OpenList 服务是否在跑都执行恢复校验。
      */
     fun onAppForegrounded() {
-        if (state.value == ServerState.RUNNING) {
-            easyTier.ensureRecovered()
-        }
+        easyTier.ensureRecovered()
     }
 
     /** 设置管理员密码；失败（内核未初始化/调用异常）返回 false。 */

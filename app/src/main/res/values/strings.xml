@@ -12,4 +12,9 @@
     <!-- 快捷方式 -->
     <string name="start_openlist_service">启动OpenList服务</string>
     <string name="stop_openlist_service">停止OpenList服务</string>
+
+    <!-- EasyTier 内网映射（独立前台服务保活） -->
+    <string name="easytier_service">内网映射</string>
+    <string name="easytier_service_running">内网映射运行中</string>
+    <string name="easytier_service_desc">独立于 OpenList 服务运行，停止请到设置关闭内网映射</string>
 </resources>

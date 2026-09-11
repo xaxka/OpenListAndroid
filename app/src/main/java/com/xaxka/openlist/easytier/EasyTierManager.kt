@@ -1,13 +1,16 @@
 package com.xaxka.openlist.easytier
 
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
+import androidx.core.content.ContextCompat
 import com.easytier.jni.EasyTierJNI
 import com.xaxka.openlist.data.log.EasyTierEventLog
 import com.xaxka.openlist.data.log.LoggableLevel
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
+import com.xaxka.openlist.service.EasyTierService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,10 +31,13 @@ import kotlinx.coroutines.sync.withLock
 /**
  * EasyTier 内网映射引擎（no-tun，无 Android VPN 服务）。
  *
- * 生命周期由 [com.xaxka.openlist.service.ServerManager] 驱动：
- * OpenList 服务 RUNNING 时按偏好 [startIfEnabled]，STOPPING/STOPPED 时 [stop]；
- * App 回前台时由 [ensureRecovered] 校验实例存活（应对 OPPO 等厂商后台冻结/清理后
- * 实例丢失、恢复前台却无法自愈的问题）。
+ * 生命周期独立于 OpenList 服务（不随其启停）：
+ * - 偏好开启时，进程存活即运行：本单例构造（进程启动/注入链建立）时自动拉起实例，
+ *   设置页总开关单独启停（SettingsViewModel.setEasytierEnabled）；
+ * - 实例运行期间由专属前台服务 [com.xaxka.openlist.service.EasyTierService] 为进程保活，
+ *   OpenList 服务停止/崩溃不影响本实例链路；
+ * - App 回前台时由 [ensureRecovered] 校验实例存活（应对 OPPO 等厂商后台冻结/清理后
+ *   实例丢失、恢复前台却无法自愈的问题），并补拉前台服务（后台受限启动失败的兜底）。
  *
  * 后台断连自愈：实例 running 但与初始节点静默断连（NAT 超时/网络切换/休眠后
  * 套接字僵死，核心侧重连失败）时状态会长期停留「运行中·0 节点」；
@@ -114,8 +120,18 @@ class EasyTierManager @Inject constructor(
     private val _state = MutableStateFlow(Status())
     val state: StateFlow<Status> = _state.asStateFlow()
 
+    init {
+        // 进程存活即运行：偏好开启时构造期自动拉起实例（生命周期独立于 OpenList 服务，
+        // 不再由 ServerManager 的服务状态联动驱动）。
+        startIfEnabled()
+    }
+
     @Volatile
     private var instanceStarted = false
+
+    /** EasyTier 前台保活服务是否存活（onKeepAliveServiceAlive/onKeepAliveServiceGone 回写）。 */
+    @Volatile
+    private var keepAliveServiceAlive = false
 
     /** collectNetworkInfos 连续未找到本实例的轮数。 */
     private var missingStreak = 0
@@ -179,7 +195,8 @@ class EasyTierManager @Inject constructor(
      * OPPO 等厂商后台会冻结/清理进程，解冻后原生实例可能已丢失而 Kotlin 侧状态仍是
      * 「已启动」——这里以 listInstances 的实际结果为准校验，实例不在则立即重启，
      * 仍在则立即轮询一次，尽快重新对齐状态。
-     * 另兜底：偏好开启但实例未启动（后台被停止等边缘情况）时按偏好补拉起。
+     * 另兜底：偏好开启但实例未启动（后台被停止等边缘情况）时按偏好补拉起；
+     * 实例在跑而前台保活服务缺失（后台启动受限失败等）时补拉前台服务。
      */
     fun ensureRecovered() {
         scope.launch {
@@ -195,6 +212,7 @@ class EasyTierManager @Inject constructor(
                     json != null && EasyTierInfoParser.containsInstance(json)
                 }.getOrDefault(false)
                 if (alive) {
+                    ensureKeepAliveServiceLocked()
                     pollStatusLocked()
                 } else {
                     log(LoggableLevel.WARN, "检测到 EasyTier 实例在后台丢失（冻结/清理），自动重启恢复")
@@ -202,6 +220,39 @@ class EasyTierManager @Inject constructor(
                 }
             }
         }
+    }
+
+    /** EasyTier 保活前台服务存活回调（onStartCommand）；记录存活标记。 */
+    fun onKeepAliveServiceAlive() {
+        keepAliveServiceAlive = true
+    }
+
+    /** EasyTier 保活前台服务销毁回调（onDestroy）；清零存活标记。 */
+    fun onKeepAliveServiceGone() {
+        keepAliveServiceAlive = false
+    }
+
+    /**
+     * 实例运行时确保保活前台服务在跑；调用方需持有 [lock]（操作无挂起点，锁只为与
+     * 停止路径串行化）。Android 12+ 后台受限启动可能抛
+     * ForegroundServiceStartNotAllowedException——捕获后记录事件，回前台时
+     * [ensureRecovered] 补拉；此时 OpenList 前台服务若在跑，进程仍受保活。
+     */
+    private fun ensureKeepAliveServiceLocked() {
+        if (keepAliveServiceAlive || !instanceStarted) return
+        runCatching {
+            ContextCompat.startForegroundService(
+                appContext,
+                Intent(appContext, EasyTierService::class.java)
+            )
+        }.onFailure { e ->
+            log(LoggableLevel.WARN, "内网映射保活服务启动受限（${e.message}），回前台时重试")
+        }
+    }
+
+    /** 停止保活前台服务（实例停止路径调用；服务自身观测 STOPPED 也会自停，双保险）。 */
+    private fun stopKeepAliveService() {
+        runCatching { appContext.stopService(Intent(appContext, EasyTierService::class.java)) }
     }
 
     /** 偏好开启且未启动时启动实例；调用方需持有 [lock]。 */
@@ -275,6 +326,8 @@ class EasyTierManager @Inject constructor(
         log(LoggableLevel.INFO, "EasyTier 实例已启动（${EasyTierSpec.INSTANCE_NAME}，no-tun）")
         registerNetworkCallback()
         startMonitor()
+        // 专属前台服务为进程保活：OpenList 服务停止/崩溃时实例链路不受影响
+        ensureKeepAliveServiceLocked()
     }
 
     /**
@@ -337,6 +390,8 @@ class EasyTierManager @Inject constructor(
         displayToml = ""
         prevEvents = emptyList()
         unregisterNetworkCallback()
+        // 回收保活前台服务（实例停止即不再占用前台服务位）
+        stopKeepAliveService()
         transition(Status(Phase.STOPPED))
         log(LoggableLevel.INFO, "EasyTier 实例已停止")
     }

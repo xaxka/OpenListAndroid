@@ -23,7 +23,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.DarkMode
+import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.OpenInBrowser
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanToolAlt
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.ScreenLockPortrait
+import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +55,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.xaxka.openlist.easytier.EasyTierSpec
 import com.xaxka.openlist.ui.nav.Routes
 import com.xaxka.openlist.ui.theme.Dimens
 import com.xaxka.openlist.system.SafHelper
@@ -62,6 +66,7 @@ import kotlinx.coroutines.launch
 internal const val TEXT_IMPORTANT = "重要"
 internal const val TEXT_GENERAL = "通用"
 internal const val TEXT_FEATURES = "扩展功能"
+internal const val TEXT_TRAFFIC = "流量统计"
 internal const val TEXT_UI = "界面"
 
 internal const val TEXT_GRANT_MANAGER_STORAGE = "申请【所有文件访问权限】"
@@ -76,8 +81,9 @@ internal const val TEXT_CONFIRM = "确认"
 internal const val SNACK_DURATION_LONG = 3000L
 
 /**
- * 设置页（源 settings.dart）：权限组（动态显隐）→ 通用 → 扩展功能入口 → 界面。
- * 内网映射（EasyTier）拆为子页面（见 EasyTierSettingsScreen）。
+ * 设置页（源 settings.dart）：权限组（动态显隐）→ 通用 → 扩展功能入口 → 流量统计 → 界面。
+ * 内网映射（EasyTier）拆为子页面（见 EasyTierSettingsScreen）；
+ * 流量统计为应用 UID 级口径（见 TrafficStatsMonitor，不改 openlist 内核源码）。
  * 无 AppBar，Scaffold 背景与底部导航由主框架提供。
  */
 @Composable
@@ -86,6 +92,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val traffic by viewModel.traffic.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -247,6 +254,36 @@ fun SettingsScreen(
                 trailing = { SettingsChevron() },
                 onTap = { navController?.navigate(Routes.SETTINGS_EASYTIER) }
             )
+
+            // ---------- 流量统计（应用 UID 级，不改 openlist 内核源码） ----------
+            SettingsDividerPreference(TEXT_TRAFFIC)
+            if (!traffic.supported) {
+                SettingsBasicPreference(
+                    title = "流量统计",
+                    subtitle = "当前设备不支持 UID 流量统计（TrafficStats 不可用）",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.DataUsage) }
+                )
+            } else {
+                SettingsBasicPreference(
+                    title = "累计收发（本次开机）",
+                    subtitle = "↓ ${EasyTierSpec.formatBytes(traffic.bootRx)} · ↑ ${EasyTierSpec.formatBytes(traffic.bootTx)}" +
+                        "（进程内全部网络流量，不含本机回环）",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.DataUsage) }
+                )
+                SettingsBasicPreference(
+                    title = "OpenList 服务流量（本次运行）",
+                    subtitle = traffic.session?.let { s ->
+                        "↓ ${EasyTierSpec.formatBytes(s.rx)} · ↑ ${EasyTierSpec.formatBytes(s.tx)}" +
+                            if (s.active) "" else "（已停止）"
+                    } ?: "服务未运行",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.History) }
+                )
+                SettingsBasicPreference(
+                    title = "实时速率",
+                    subtitle = "↓ ${EasyTierSpec.formatBytes(traffic.rxBps)}/s · ↑ ${EasyTierSpec.formatBytes(traffic.txBps)}/s",
+                    leading = { SettingsPreferenceIcon(Icons.Outlined.Speed) }
+                )
+            }
 
             // ---------- 界面 ----------
             SettingsDividerPreference(TEXT_UI)

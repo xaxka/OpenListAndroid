@@ -10,8 +10,7 @@ import androidx.lifecycle.viewModelScope
 import com.xaxka.openlist.data.log.EasyTierEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
-import com.xaxka.openlist.service.ServerManager
-import com.xaxka.openlist.service.ServerState
+import com.xaxka.openlist.net.TrafficStatsMonitor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -35,10 +34,13 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val prefs: AppPrefsRepository,
     private val easyTier: EasyTierManager,
-    private val serverManager: ServerManager,
     private val eventLog: EasyTierEventLog,
+    private val trafficMonitor: TrafficStatsMonitor,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
+
+    /** 流量统计（应用 UID 级，随设置页可见轮询采样，页面关闭即停）。 */
+    val traffic: StateFlow<TrafficStatsMonitor.TrafficState> = trafficMonitor.state
 
     /** 动态权限条目显隐（照源按 SDK 判定，未授权才显示） */
     data class PermissionState(
@@ -173,29 +175,23 @@ class SettingsViewModel @Inject constructor(
 
     // ---------- 内网映射（EasyTier） ----------
 
-    /** 总开关：开启且服务正在运行时立即拉起实例，关闭立即停止；否则随下次服务启动生效。 */
+    /** 总开关：内网映射独立于 OpenList 服务启停——开启立即拉起实例，关闭立即停止。 */
     fun setEasytierEnabled(value: Boolean) {
         viewModelScope.launch {
             prefs.setEasytierEnabled(value)
-            if (serverManager.state.value == ServerState.RUNNING) {
-                if (value) easyTier.startIfEnabled() else easyTier.stop()
-            }
+            if (value) easyTier.startIfEnabled() else easyTier.stop()
             snack(if (value) "内网映射已启用" else "内网映射已停用")
         }
     }
 
     /**
      * 手动重启内网映射实例：掉线/连接异常时的兜底自愈（自愈阈值未触发或场景未覆盖时）。
-     * 未启用或 OpenList 服务未运行时仅提示不执行（实例生命周期随服务启停）。
+     * 实例生命周期独立于 OpenList 服务，未启用时仅提示不执行。
      */
     fun restartEasyTier() {
         viewModelScope.launch {
             if (!prefs.easytierEnabled.first()) {
                 snack("内网映射未启用，请先打开总开关")
-                return@launch
-            }
-            if (serverManager.state.value != ServerState.RUNNING) {
-                snack("OpenList 服务未运行，启动服务后将自动连接")
                 return@launch
             }
             snack("正在重启内网映射…")
@@ -206,7 +202,7 @@ class SettingsViewModel @Inject constructor(
     /** 读取 EasyTier 事件日记（最近 24h，旧→新原始文本），供「导出事件日记」写出。 */
     fun eventDiaryText(): String = eventLog.readRecent()
 
-    /** 网络名称/密钥/对端 URI：保存后需重启服务（或重开总开关）生效。 */
+    /** 网络名称/密钥/对端 URI：写入启动 TOML，实例运行中立即重启生效。 */
     fun setEasytierNetwork(value: String) = setEasytierText(prefs::setEasytierNetwork, value, "网络名称")
 
     fun setEasytierNetworkSecret(value: String) = setEasytierText(prefs::setEasytierNetworkSecret, value, "网络密钥")
@@ -217,13 +213,11 @@ class SettingsViewModel @Inject constructor(
     fun setEasytierQuicProxy(value: Boolean) {
         viewModelScope.launch {
             prefs.setEasytierQuicProxy(value)
-            val running = serverManager.state.value == ServerState.RUNNING &&
-                prefs.easytierEnabled.first()
-            if (running) {
+            if (easyTierInstanceRunning()) {
                 snack(if (value) "QUIC 代理已启用，正在重启内网映射…" else "QUIC 代理已停用，正在重启内网映射…")
                 easyTier.restart()
             } else {
-                snack(if (value) "QUIC 代理已启用，重开内网映射开关或重启服务后生效" else "QUIC 代理已停用，重开内网映射开关或重启服务后生效")
+                snack(if (value) "QUIC 代理已启用，打开内网映射开关后生效" else "QUIC 代理已停用，打开内网映射开关后生效")
             }
         }
     }
@@ -236,13 +230,11 @@ class SettingsViewModel @Inject constructor(
     fun setEasytierSecureMode(value: Boolean) {
         viewModelScope.launch {
             prefs.setEasytierSecureMode(value)
-            val running = serverManager.state.value == ServerState.RUNNING &&
-                prefs.easytierEnabled.first()
-            if (running) {
+            if (easyTierInstanceRunning()) {
                 snack(if (value) "安全模式已启用，正在重启内网映射…" else "安全模式已停用，正在重启内网映射…")
                 easyTier.restart()
             } else {
-                snack(if (value) "安全模式已启用，重开内网映射开关或重启服务后生效" else "安全模式已停用，重开内网映射开关或重启服务后生效")
+                snack(if (value) "安全模式已启用，打开内网映射开关后生效" else "安全模式已停用，打开内网映射开关后生效")
             }
         }
     }
@@ -250,9 +242,20 @@ class SettingsViewModel @Inject constructor(
     private fun setEasytierText(setter: suspend (String) -> Unit, value: String, label: String) {
         viewModelScope.launch {
             setter(value)
-            snack("${label}已保存，重开内网映射开关或重启服务后生效")
+            if (easyTierInstanceRunning()) {
+                snack("${label}已保存，正在重启内网映射…")
+                easyTier.restart()
+            } else {
+                snack("${label}已保存，打开内网映射开关后生效")
+            }
         }
     }
+
+    /** 内网映射实例是否在跑（STARTING/RUNNING 均视为在跑，重启可使其吃到新配置）。 */
+    private fun easyTierInstanceRunning(): Boolean =
+        easyTier.state.value.phase.let {
+            it == EasyTierManager.Phase.STARTING || it == EasyTierManager.Phase.RUNNING
+        }
 
     fun snack(
         message: String,

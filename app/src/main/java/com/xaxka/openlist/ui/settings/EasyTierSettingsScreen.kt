@@ -154,7 +154,7 @@ fun EasyTierSettingsScreen(
             ) {
                 SettingsSwitchPreference(
                     title = "启用内网映射",
-                    subtitle = "随服务启停；no-tun 模式（不使用 VPN）",
+                    subtitle = "独立于 OpenList 服务运行（专属前台服务保活）；no-tun 模式（不使用 VPN）",
                     icon = Icons.Outlined.Lan,
                     value = state.easytierEnabled,
                     onCheckedChange = viewModel::setEasytierEnabled

@@ -75,6 +75,17 @@
                 android:value="Runs a local OpenList server to host and share files." />
         </service>
 
+        <!-- EasyTier 内网映射独立前台服务：进程保活，不随 OpenList 服务启停 -->
+        <service
+            android:name=".service.EasyTierService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:label="@string/easytier_service">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the EasyTier peer-to-peer overlay network alive independently of the OpenList server." />
+        </service>
+
         <service
             android:name=".system.OpenListTileService"
             android:exported="true"
