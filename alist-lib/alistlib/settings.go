@@ -35,6 +35,7 @@ func SetAdminPassword(pwd string) {
 		// App 自带改密入口，记录缺失时按内核 initAdmin 的构造补齐
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			createAdmin(pwd)
+			cmd.DelAdminCacheOnline()
 			return
 		}
 		utils.Log.Errorf("failed get admin user: %+v", err)
@@ -71,5 +72,19 @@ func createAdmin(pwd string) {
 	utils.Log.Infof("admin user has been created:")
 	utils.Log.Infof("username: %s", admin.Username)
 	utils.Log.Infof("password: %s", pwd)
-	cmd.DelAdminCacheOnline()
+}
+
+// 启动初始化后兜底：内核 beta 起全新数据目录不再自动创建 admin（交由 Web
+// 安装向导），App 无安装向导入口，缺失时创建随机密码 admin 并输出到日志；
+// 初始化阶段服务未启动，无需清理在线缓存
+func ensureAdminUser() {
+	_, err := op.GetAdmin()
+	if err == nil {
+		return
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		utils.Log.Errorf("failed get admin user: %+v", err)
+		return
+	}
+	createAdmin(random.String(8))
 }

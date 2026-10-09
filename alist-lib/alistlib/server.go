@@ -48,6 +48,10 @@ func Init(e Event, cb LogCallback) error {
 		utils.Log.SetFormatter(logFormatter)
 		utils.Log.ExitFunc = event.OnProcessExit
 	}
+	// 内核 beta 在非 Dev 模式且无 OPENLIST_ADMIN_PASSWORD 时不会自动创建 admin，
+	// App 无 Web 安装向导入口，初始化完成后兜底创建，避免后续改密/登录失败；
+	// 置于 SetFormatter 之后，创建的随机密码才能随日志显示到 App 界面
+	ensureAdminUser()
 	return nil
 }
 
