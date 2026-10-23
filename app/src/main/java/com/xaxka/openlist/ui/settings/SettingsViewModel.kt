@@ -10,7 +10,6 @@ import androidx.lifecycle.viewModelScope
 import com.xaxka.openlist.data.log.EasyTierEventLog
 import com.xaxka.openlist.data.prefs.AppPrefsRepository
 import com.xaxka.openlist.easytier.EasyTierManager
-import com.xaxka.openlist.net.TrafficStatsMonitor
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -35,12 +34,8 @@ class SettingsViewModel @Inject constructor(
     private val prefs: AppPrefsRepository,
     private val easyTier: EasyTierManager,
     private val eventLog: EasyTierEventLog,
-    private val trafficMonitor: TrafficStatsMonitor,
     @ApplicationContext private val appContext: Context
 ) : ViewModel() {
-
-    /** 流量统计（应用 UID 级，随设置页可见轮询采样，页面关闭即停）。 */
-    val traffic: StateFlow<TrafficStatsMonitor.TrafficState> = trafficMonitor.state
 
     /** 动态权限条目显隐（照源按 SDK 判定，未授权才显示） */
     data class PermissionState(
