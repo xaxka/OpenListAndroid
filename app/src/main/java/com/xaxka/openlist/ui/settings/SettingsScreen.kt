@@ -260,14 +260,15 @@ fun SettingsScreen(
             if (!traffic.supported) {
                 SettingsBasicPreference(
                     title = "流量统计",
-                    subtitle = "当前设备不支持 UID 流量统计（TrafficStats 不可用）",
+                    subtitle = "当前设备不支持流量统计（TrafficStats 与 /proc 均不可用）",
                     leading = { SettingsPreferenceIcon(Icons.Outlined.DataUsage) }
                 )
             } else {
                 SettingsBasicPreference(
                     title = "累计收发（本次开机）",
                     subtitle = "↓ ${EasyTierSpec.formatBytes(traffic.bootRx)} · ↑ ${EasyTierSpec.formatBytes(traffic.bootTx)}" +
-                        "（进程内全部网络流量，不含本机回环）",
+                        if (traffic.uidLevel) "（UID 级，进程内全部网络流量，不含本机回环）"
+                        else "（/proc 回退，本进程网卡级近似）",
                     leading = { SettingsPreferenceIcon(Icons.Outlined.DataUsage) }
                 )
                 SettingsBasicPreference(
